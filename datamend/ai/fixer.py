@@ -361,7 +361,10 @@ def _git_branch(root: Path, changes: dict[Path, str], run_id: str, row: dict,
     message = (f"datamend: fix {row['incident']} ({run_id})\n\n"
                f"Root cause: {expl.get('root_cause', '')}\nFix: {expl.get('fix', '')}\n"
                f"Validation score: {row['score']:.2f}\nApproved-by: {approver}\n")
-    commit = git("commit-tree", tree, "-p", head, input=message)
+    bot = {"GIT_AUTHOR_NAME": "datamend[bot]", "GIT_AUTHOR_EMAIL": "datamend@users.noreply.github.com",
+           "GIT_COMMITTER_NAME": "datamend[bot]",
+           "GIT_COMMITTER_EMAIL": "datamend@users.noreply.github.com"}
+    commit = git("commit-tree", tree, "-p", head, input=message, env={**os.environ, **bot})
     branch = f"datamend/ai-fix-{run_id}"
     git("update-ref", f"refs/heads/{branch}", commit)
     return {"branch": branch, "commit": commit[:12]}

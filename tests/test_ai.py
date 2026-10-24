@@ -77,6 +77,9 @@ def test_recorded_fix_is_proposed_then_applied(env):
     files = subprocess.run(["git", "-C", str(env["root"]), "show", "--name-only", "--format=", branch],
                            capture_output=True, text=True, check=True).stdout.split()
     assert sorted(files) == ["datasets.yaml", JOB]
+    author = subprocess.run(["git", "-C", str(env["root"]), "log", "-1", "--format=%an <%ae>", branch],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    assert author == "datamend[bot] <datamend@users.noreply.github.com>"
     current = subprocess.run(["git", "-C", str(env["root"]), "branch", "--show-current"],
                              capture_output=True, text=True, check=True).stdout.strip()
     assert current != branch  # the checked-out branch is untouched
