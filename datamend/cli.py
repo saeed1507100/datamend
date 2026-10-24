@@ -216,3 +216,20 @@ def agent_serve(port: int = 8787, workspace_root: Path = RUNS,
     workspace_root.mkdir(parents=True, exist_ok=True)
     typer.echo(f"agent endpoint on http://127.0.0.1:{port}/v1/messages")
     server.serve(port, workspace_root, bare=bare)
+
+
+SCENARIO_OUT = typer.Option(Path("site/src/scenario.json"))
+RECORDING = typer.Option(Path("examples/ai/raw_payments_stale.json"))
+EXAMPLES = typer.Option(Path("examples"))
+
+
+@app.command("export-scenario")
+def export_scenario(out: Path = SCENARIO_OUT, recording: Path = RECORDING,
+                    examples: Path = EXAMPLES):
+    """Run the full story in a temp folder and write it as JSON for the showcase site."""
+    from datamend import showcase
+
+    data = showcase.export(recording, examples)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(data, indent=1, default=str) + "\n")
+    typer.echo(f"wrote {len(data['steps'])} steps, {len(data['audit'])} audit entries to {out}")

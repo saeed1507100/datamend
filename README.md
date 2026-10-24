@@ -4,12 +4,16 @@
 
 **Auto-fix the safe data incidents, escalate the rest — with an audit trail.**
 
+When a fix isn't provably safe, a guardrailed AI agent investigates, proposes a
+patch, proves it on a shadow copy of the warehouse, and waits for a person to
+approve it. datamend plugs into DuckDB, Postgres, Airflow, Prefect, and AWS.
+
 `datamend` watches dataset freshness and quality, walks the lineage graph to
 find the blast radius of a failure, and repairs the incidents that are known
 to be safe to repair. Everything else goes to a human. Every decision lands in
 an audit log.
 
-> Status: v0.1 (Oct 2026). Runs end to end on synthetic data.
+> Status: v0.2 (Oct 2026). Runs end to end on synthetic data. Showcase site in [`site/`](site/).
 
 ## Why
 
@@ -87,6 +91,56 @@ uv run datamend lineage raw_payments --events examples/openlineage.jsonl
 
 Only `COMPLETE` events count. Edges to datasets missing from the catalog are
 skipped with a warning.
+
+## AI investigation
+
+`raw_payments` escalates because its job appends a full export on every run, so a
+rerun would duplicate payments and double revenue. `datamend ai investigate`
+sends that incident to a Claude Code agent behind a local, Messages-API-shaped
+endpoint:
+
+```bash
+export DATAMEND_AGENT_TOKEN=$(openssl rand -hex 16)
+uv run datamend agent serve &
+uv run datamend ai investigate raw_payments:stale   # proposed, validation 7/7
+uv run datamend ai approve <run_id> --by you         # branch, apply, rerun, re-check
+```
+
+Or replay a recorded real run without calling a model: `make demo-ai`.
+
+The agent can only read and edit files in a sandbox copy. Its patch must pass
+static guardrails (one file, small diff, allowlisted imports, literal SQL with no
+DDL) and a shadow validation (reruns and backfills change nothing, ids stay
+unique, schema and volume hold, downstream checks pass). Every run, whatever its
+outcome, is recorded with its prompt, explanation, diff, checks, score, cost, and
+approver. Details: [docs/AI.md](docs/AI.md).
+
+## Plug into your platform
+
+datamend needs a `Warehouse` (row count and last load time) and an
+`Orchestrator` (run a job in `rerun` or `backfill` mode). Pick them in
+`datasets.yaml`:
+
+```yaml
+platform:
+  warehouse:    {type: postgres, dsn_env: WAREHOUSE_DSN}
+  orchestrator: {type: airflow, url: https://airflow.internal}
+```
+
+Shipped: DuckDB and any DB-API warehouse; local Python jobs, Airflow, Prefect,
+AWS Glue, and AWS Step Functions orchestrators; lineage from YAML or OpenLineage.
+Details: [docs/ADAPTERS.md](docs/ADAPTERS.md).
+
+## Showcase site
+
+[`site/`](site/) is a static page that replays a real run: load, failures,
+lineage and blast radius, guardrail decisions, the AI investigation, approval,
+and the audit trail. `uv run datamend export-scenario` regenerates its data from
+the real system. Deployment plan: [docs/DEPLOY.md](docs/DEPLOY.md).
+
+```bash
+cd site && npm install && npm run dev
+```
 
 ## The guardrail model
 

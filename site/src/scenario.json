@@ -1,0 +1,873 @@
+{
+ "generated_by": "datamend export-scenario",
+ "now": "2026-10-24T09:00:00Z",
+ "graph": {
+  "nodes": [
+   {
+    "id": "raw_orders",
+    "layer": 0,
+    "job": "load_raw_orders",
+    "cadence_minutes": 60,
+    "idempotent": true,
+    "critical": "auto"
+   },
+   {
+    "id": "raw_customers",
+    "layer": 0,
+    "job": "load_raw_customers",
+    "cadence_minutes": 360,
+    "idempotent": true,
+    "critical": "auto"
+   },
+   {
+    "id": "raw_products",
+    "layer": 0,
+    "job": "load_raw_products",
+    "cadence_minutes": 1440,
+    "idempotent": true,
+    "critical": "auto"
+   },
+   {
+    "id": "raw_payments",
+    "layer": 0,
+    "job": "load_raw_payments",
+    "cadence_minutes": 60,
+    "idempotent": false,
+    "critical": "auto"
+   },
+   {
+    "id": "orders",
+    "layer": 1,
+    "job": "build_orders",
+    "cadence_minutes": 60,
+    "idempotent": true,
+    "critical": "auto"
+   },
+   {
+    "id": "customers",
+    "layer": 1,
+    "job": "build_customers",
+    "cadence_minutes": 360,
+    "idempotent": true,
+    "critical": "auto"
+   },
+   {
+    "id": "products",
+    "layer": 1,
+    "job": "build_products",
+    "cadence_minutes": 1440,
+    "idempotent": true,
+    "critical": "manual"
+   },
+   {
+    "id": "payments",
+    "layer": 1,
+    "job": "build_payments",
+    "cadence_minutes": 60,
+    "idempotent": true,
+    "critical": "auto"
+   },
+   {
+    "id": "revenue_daily",
+    "layer": 2,
+    "job": "build_revenue",
+    "cadence_minutes": 60,
+    "idempotent": true,
+    "critical": "auto"
+   },
+   {
+    "id": "customer_ltv",
+    "layer": 2,
+    "job": "build_ltv",
+    "cadence_minutes": 360,
+    "idempotent": true,
+    "critical": "auto"
+   }
+  ],
+  "edges": [
+   {
+    "from": "customers",
+    "to": "customer_ltv"
+   },
+   {
+    "from": "orders",
+    "to": "customer_ltv"
+   },
+   {
+    "from": "orders",
+    "to": "revenue_daily"
+   },
+   {
+    "from": "payments",
+    "to": "revenue_daily"
+   },
+   {
+    "from": "raw_customers",
+    "to": "customers"
+   },
+   {
+    "from": "raw_orders",
+    "to": "orders"
+   },
+   {
+    "from": "raw_payments",
+    "to": "payments"
+   },
+   {
+    "from": "raw_products",
+    "to": "products"
+   }
+  ]
+ },
+ "steps": [
+  {
+   "key": "load",
+   "title": "Pipelines load",
+   "summary": "Ten datasets in three layers load on schedule. Each job is a Python file run by the orchestrator.",
+   "states": {
+    "raw_orders": "healthy",
+    "raw_customers": "healthy",
+    "raw_products": "healthy",
+    "raw_payments": "healthy",
+    "orders": "healthy",
+    "customers": "healthy",
+    "products": "healthy",
+    "payments": "healthy",
+    "revenue_daily": "healthy",
+    "customer_ltv": "healthy"
+   },
+   "stats": {
+    "raw_orders": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "raw_customers": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "raw_products": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "raw_payments": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "orders": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "customers": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "products": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "payments": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "revenue_daily": {
+     "rows": 1,
+     "age_minutes": 5
+    },
+    "customer_ltv": {
+     "rows": 200,
+     "age_minutes": 5
+    }
+   },
+   "order": [
+    "raw_orders",
+    "raw_customers",
+    "raw_products",
+    "raw_payments",
+    "orders",
+    "customers",
+    "products",
+    "payments",
+    "customer_ltv",
+    "revenue_daily"
+   ]
+  },
+  {
+   "key": "detect",
+   "title": "Failures detected",
+   "summary": "Two loads stop and one loses rows. Freshness and row-count checks raise 7 incidents.",
+   "states": {
+    "raw_orders": "stale",
+    "raw_customers": "gap",
+    "raw_products": "healthy",
+    "raw_payments": "stale",
+    "orders": "stale",
+    "customers": "healthy",
+    "products": "healthy",
+    "payments": "stale",
+    "revenue_daily": "stale",
+    "customer_ltv": "stale"
+   },
+   "stats": {
+    "raw_orders": {
+     "rows": 200,
+     "age_minutes": 180
+    },
+    "raw_customers": {
+     "rows": 10,
+     "age_minutes": 5
+    },
+    "raw_products": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "raw_payments": {
+     "rows": 200,
+     "age_minutes": 180
+    },
+    "orders": {
+     "rows": 200,
+     "age_minutes": 180
+    },
+    "customers": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "products": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "payments": {
+     "rows": 200,
+     "age_minutes": 180
+    },
+    "revenue_daily": {
+     "rows": 1,
+     "age_minutes": 180
+    },
+    "customer_ltv": {
+     "rows": 200,
+     "age_minutes": 1080
+    }
+   },
+   "incidents": [
+    {
+     "id": "raw_orders:stale",
+     "dataset": "raw_orders",
+     "kind": "stale",
+     "detail": "180 min old, cadence 60 min"
+    },
+    {
+     "id": "raw_customers:gap",
+     "dataset": "raw_customers",
+     "kind": "gap",
+     "detail": "10 rows, expected >= 50"
+    },
+    {
+     "id": "raw_payments:stale",
+     "dataset": "raw_payments",
+     "kind": "stale",
+     "detail": "180 min old, cadence 60 min"
+    },
+    {
+     "id": "orders:stale",
+     "dataset": "orders",
+     "kind": "stale",
+     "detail": "180 min old, cadence 60 min"
+    },
+    {
+     "id": "payments:stale",
+     "dataset": "payments",
+     "kind": "stale",
+     "detail": "180 min old, cadence 60 min"
+    },
+    {
+     "id": "revenue_daily:stale",
+     "dataset": "revenue_daily",
+     "kind": "stale",
+     "detail": "180 min old, cadence 60 min"
+    },
+    {
+     "id": "customer_ltv:stale",
+     "dataset": "customer_ltv",
+     "kind": "stale",
+     "detail": "1080 min old, cadence 360 min"
+    }
+   ]
+  },
+  {
+   "key": "lineage",
+   "title": "Lineage finds the roots",
+   "summary": "6 stale datasets trace back to 2 root causes. Everything downstream is a symptom, not a separate incident.",
+   "states": {
+    "raw_orders": "stale",
+    "raw_customers": "gap",
+    "raw_products": "healthy",
+    "raw_payments": "stale",
+    "orders": "stale",
+    "customers": "healthy",
+    "products": "healthy",
+    "payments": "stale",
+    "revenue_daily": "stale",
+    "customer_ltv": "stale"
+   },
+   "stats": {
+    "raw_orders": {
+     "rows": 200,
+     "age_minutes": 180
+    },
+    "raw_customers": {
+     "rows": 10,
+     "age_minutes": 5
+    },
+    "raw_products": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "raw_payments": {
+     "rows": 200,
+     "age_minutes": 180
+    },
+    "orders": {
+     "rows": 200,
+     "age_minutes": 180
+    },
+    "customers": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "products": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "payments": {
+     "rows": 200,
+     "age_minutes": 180
+    },
+    "revenue_daily": {
+     "rows": 1,
+     "age_minutes": 180
+    },
+    "customer_ltv": {
+     "rows": 200,
+     "age_minutes": 1080
+    }
+   },
+   "roots": [
+    {
+     "dataset": "raw_orders",
+     "blast_radius": [
+      "orders",
+      "customer_ltv",
+      "revenue_daily"
+     ]
+    },
+    {
+     "dataset": "raw_payments",
+     "blast_radius": [
+      "payments",
+      "revenue_daily"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "decide",
+   "title": "Guardrails decide, safe fixes run",
+   "summary": "Each root faces five rules. Two pass and are fixed automatically. raw_payments fails `idempotent`, so it goes to a person, and its downstream datasets wait instead of being rebuilt on bad data.",
+   "states": {
+    "raw_orders": "auto_fix",
+    "raw_customers": "auto_fix",
+    "raw_products": "healthy",
+    "raw_payments": "needs_approval",
+    "orders": "suppressed",
+    "customers": "healthy",
+    "products": "healthy",
+    "payments": "blocked",
+    "revenue_daily": "blocked",
+    "customer_ltv": "suppressed"
+   },
+   "stats": {
+    "raw_orders": {
+     "rows": 200,
+     "age_minutes": 0
+    },
+    "raw_customers": {
+     "rows": 200,
+     "age_minutes": 0
+    },
+    "raw_products": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "raw_payments": {
+     "rows": 200,
+     "age_minutes": 180
+    },
+    "orders": {
+     "rows": 200,
+     "age_minutes": 0
+    },
+    "customers": {
+     "rows": 200,
+     "age_minutes": 0
+    },
+    "products": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "payments": {
+     "rows": 200,
+     "age_minutes": 180
+    },
+    "revenue_daily": {
+     "rows": 1,
+     "age_minutes": 180
+    },
+    "customer_ltv": {
+     "rows": 200,
+     "age_minutes": 0
+    }
+   },
+   "decisions": [
+    {
+     "incident": "raw_orders:stale",
+     "verdict": "auto_fix",
+     "action": "rerun:load_raw_orders",
+     "blast_radius": 3,
+     "rules": [
+      {
+       "rule": "registered_fix",
+       "passed": true,
+       "reason": "stale -> rerun"
+      },
+      {
+       "rule": "idempotent",
+       "passed": true,
+       "reason": "load_raw_orders idempotent=True"
+      },
+      {
+       "rule": "blast_radius",
+       "passed": true,
+       "reason": "3 <= 5"
+      },
+      {
+       "rule": "cooldown",
+       "passed": true,
+       "reason": "last fix never, window 30 min"
+      },
+      {
+       "rule": "not_manual",
+       "passed": true,
+       "reason": "manual: none"
+      }
+     ]
+    },
+    {
+     "incident": "raw_customers:gap",
+     "verdict": "auto_fix",
+     "action": "backfill:load_raw_customers",
+     "blast_radius": 2,
+     "rules": [
+      {
+       "rule": "registered_fix",
+       "passed": true,
+       "reason": "gap -> backfill"
+      },
+      {
+       "rule": "idempotent",
+       "passed": true,
+       "reason": "load_raw_customers idempotent=True"
+      },
+      {
+       "rule": "blast_radius",
+       "passed": true,
+       "reason": "2 <= 5"
+      },
+      {
+       "rule": "cooldown",
+       "passed": true,
+       "reason": "last fix never, window 30 min"
+      },
+      {
+       "rule": "not_manual",
+       "passed": true,
+       "reason": "manual: none"
+      }
+     ]
+    },
+    {
+     "incident": "raw_payments:stale",
+     "verdict": "needs_approval",
+     "action": null,
+     "blast_radius": 2,
+     "rules": [
+      {
+       "rule": "registered_fix",
+       "passed": true,
+       "reason": "stale -> rerun"
+      },
+      {
+       "rule": "idempotent",
+       "passed": false,
+       "reason": "load_raw_payments idempotent=False"
+      },
+      {
+       "rule": "blast_radius",
+       "passed": true,
+       "reason": "2 <= 5"
+      },
+      {
+       "rule": "cooldown",
+       "passed": true,
+       "reason": "last fix never, window 30 min"
+      },
+      {
+       "rule": "not_manual",
+       "passed": true,
+       "reason": "manual: none"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "key": "investigate",
+   "title": "AI investigates the escalation",
+   "summary": "The agent reads the pipeline in a sandbox and edits one file. Static guardrails and a shadow-warehouse validation check the patch before a person sees it.",
+   "states": {
+    "raw_orders": "auto_fix",
+    "raw_customers": "auto_fix",
+    "raw_products": "healthy",
+    "raw_payments": "ai_proposed",
+    "orders": "suppressed",
+    "customers": "healthy",
+    "products": "healthy",
+    "payments": "blocked",
+    "revenue_daily": "blocked",
+    "customer_ltv": "suppressed"
+   },
+   "stats": {
+    "raw_orders": {
+     "rows": 200,
+     "age_minutes": 0
+    },
+    "raw_customers": {
+     "rows": 200,
+     "age_minutes": 0
+    },
+    "raw_products": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "raw_payments": {
+     "rows": 200,
+     "age_minutes": 180
+    },
+    "orders": {
+     "rows": 200,
+     "age_minutes": 0
+    },
+    "customers": {
+     "rows": 200,
+     "age_minutes": 0
+    },
+    "products": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "payments": {
+     "rows": 200,
+     "age_minutes": 180
+    },
+    "revenue_daily": {
+     "rows": 1,
+     "age_minutes": 180
+    },
+    "customer_ltv": {
+     "rows": 200,
+     "age_minutes": 0
+    }
+   },
+   "ai": {
+    "run_id": "ai_20261024090000_597d78",
+    "status": "proposed",
+    "status_reason": "all 5 guardrails passed, validation 7/7",
+    "prompt": "## Incident\nDataset `raw_payments` is stale. datamend did not auto-rerun it because a guardrail failed:\nidempotent: load_raw_payments idempotent=False\n\n## Context\n- Job: `load_raw_payments`, file `pipelines/load_raw_payments.py`. Each job is a Python file with `run(con, now, mode)`.\n  `con` is a DuckDB connection, `now` is the load timestamp, `mode` is \"rerun\" or \"backfill\".\n- Upstreams: none (source table)\n- Downstream, rebuilt after this job: payments, revenue_daily\n- Helpers available in `datamend/pipeline.py` are NOT in this sandbox; use plain SQL via `con`.\n\n## Task\n1. Read `pipelines/load_raw_payments.py` and the downstream jobs in `pipelines/` to understand the impact.\n2. Find why rerunning `load_raw_payments` is unsafe.\n3. Edit only `pipelines/load_raw_payments.py` so that running it any number of times, in either mode, leaves\n   `raw_payments` with the same rows as running it once. Keep the schema and columns.\n4. Reply with ONLY this JSON object, no prose around it:\n{\"root_cause\": \"...\", \"fix\": \"...\", \"rationale\": \"why this fix and not another\",\n  \"risk\": \"low|medium|high, and what could still go wrong\", \"confidence\": 0.0}\n",
+    "explanation": {
+     "root_cause": "load_raw_payments did a plain INSERT of the full 200-row export (ids 0..199) into raw_payments on every run, with no delete or dedupe. Each rerun or backfill appended another 200 rows, so ids were duplicated. Downstream, payments copies raw_payments as is, and revenue_daily sums payments.amount, so revenue would be multiplied by the number of runs.",
+     "fix": "In pipelines/load_raw_payments.py, the load now runs in one transaction. It deletes all rows from raw_payments, inserts the 200-row export, and commits. It rolls back and re-raises on error. The schema and columns are unchanged.",
+     "rationale": "The export is always the full day's snapshot, so a full replace is the natural idempotent load. It also removes duplicates already left by earlier reruns, which an insert-only-missing-ids approach would keep. The transaction means a failed run can't leave the table empty or half-loaded. I did not add a primary key or change the schema, since that is out of scope. I did not use a per-day partition delete, since the table has no date key apart from _loaded_at.",
+     "risk": "low. Rows are identical across runs except _loaded_at, which is set to the new run's timestamp. A check that compares _loaded_at would see a difference. If the real export ever stops being the full set of ids, the full delete would drop the rows missing from it. I could not run the code, so the DuckDB transaction handling is unvalidated. If the runner already wraps the job in a transaction, the nested BEGIN would fail.",
+     "confidence": 0.85
+    },
+    "guardrails": [
+     {
+      "rule": "eligible_incident",
+      "passed": true,
+      "detail": "escalated for idempotent; AI may handle idempotent"
+     },
+     {
+      "rule": "single_file",
+      "passed": true,
+      "detail": "changed: pipelines/load_raw_payments.py"
+     },
+     {
+      "rule": "diff_size",
+      "passed": true,
+      "detail": "16 changed lines, limit 40"
+     },
+     {
+      "rule": "static_safety",
+      "passed": true,
+      "detail": "imports and calls allowed; all SQL is literal and free of DDL/admin keywords"
+     },
+     {
+      "rule": "explained",
+      "passed": true,
+      "detail": "root cause, fix, rationale, and risk given"
+     }
+    ],
+    "validation": [
+     {
+      "check": "runs_clean",
+      "passed": true,
+      "detail": "rerun x2 and backfill x1 completed without errors"
+     },
+     {
+      "check": "idempotent_rerun",
+      "passed": true,
+      "detail": "second rerun changed nothing in raw_payments, payments, revenue_daily"
+     },
+     {
+      "check": "idempotent_backfill",
+      "passed": true,
+      "detail": "backfill after rerun changed nothing"
+     },
+     {
+      "check": "unique_ids",
+      "passed": true,
+      "detail": "200 rows, 200 distinct ids"
+     },
+     {
+      "check": "schema_stable",
+      "passed": true,
+      "detail": "3 columns, names and types unchanged"
+     },
+     {
+      "check": "volume",
+      "passed": true,
+      "detail": "200 ids, live table has 200 distinct ids"
+     },
+     {
+      "check": "post_checks",
+      "passed": true,
+      "detail": "3 datasets fresh and complete"
+     }
+    ],
+    "score": 1.0,
+    "diff": "--- a/pipelines/load_raw_payments.py\n+++ b/pipelines/load_raw_payments.py\n@@ -7,7 +7,15 @@\n         \"(id INTEGER, amount DECIMAL(10, 2), _loaded_at TIMESTAMP)\"\n     )\n     # The export always holds the full day: payment ids 0..199.\n-    con.execute(\n-        \"INSERT INTO raw_payments SELECT range, 10 + range % 90, ? FROM range(200)\",\n-        [now],\n-    )\n+    # Replace the snapshot atomically so reruns and backfills don't append duplicates.\n+    con.execute(\"BEGIN TRANSACTION\")\n+    try:\n+        con.execute(\"DELETE FROM raw_payments\")\n+        con.execute(\n+            \"INSERT INTO raw_payments SELECT range, 10 + range % 90, ? FROM range(200)\",\n+            [now],\n+        )\n+        con.execute(\"COMMIT\")\n+    except Exception:\n+        con.execute(\"ROLLBACK\")\n+        raise\n",
+    "model": "sonnet",
+    "recorded_at": "2026-10-24T05:58:04.620665Z",
+    "usage": {
+     "backend": "claude-code-cli",
+     "tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit"
+     ],
+     "num_turns": 6,
+     "cost_usd": 0.034207,
+     "duration_ms": 20680,
+     "subtype": "success"
+    }
+   }
+  },
+  {
+   "key": "approve",
+   "title": "Approved, shipped, rerun, verified",
+   "summary": "A person approves. datamend commits the fix to a branch, reruns the chain, and re-checks it. Every dataset is healthy, and the catalog now marks the job idempotent.",
+   "states": {
+    "raw_orders": "auto_fix",
+    "raw_customers": "auto_fix",
+    "raw_products": "healthy",
+    "raw_payments": "ai_fix",
+    "orders": "healthy",
+    "customers": "healthy",
+    "products": "healthy",
+    "payments": "healthy",
+    "revenue_daily": "healthy",
+    "customer_ltv": "healthy"
+   },
+   "stats": {
+    "raw_orders": {
+     "rows": 200,
+     "age_minutes": 0
+    },
+    "raw_customers": {
+     "rows": 200,
+     "age_minutes": 0
+    },
+    "raw_products": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "raw_payments": {
+     "rows": 200,
+     "age_minutes": 0
+    },
+    "orders": {
+     "rows": 200,
+     "age_minutes": 0
+    },
+    "customers": {
+     "rows": 200,
+     "age_minutes": 0
+    },
+    "products": {
+     "rows": 200,
+     "age_minutes": 5
+    },
+    "payments": {
+     "rows": 200,
+     "age_minutes": 0
+    },
+    "revenue_daily": {
+     "rows": 1,
+     "age_minutes": 0
+    },
+    "customer_ltv": {
+     "rows": 200,
+     "age_minutes": 0
+    }
+   },
+   "approval": {
+    "approved_by": "data-eng on-call",
+    "commit": {
+     "branch": "datamend/ai-fix-ai_20261024090000_597d78",
+     "commit": "dc8931c30674"
+    },
+    "result": "healthy"
+   }
+  }
+ ],
+ "audit": [
+  {
+   "incident": "raw_orders:stale",
+   "dataset": "raw_orders",
+   "decision": "auto_fix",
+   "action": "rerun:load_raw_orders",
+   "blast_radius": 3,
+   "rules_passed": 5,
+   "reason": "all rules passed",
+   "result": "fresh",
+   "at": "2026-10-24T09:00:00Z"
+  },
+  {
+   "incident": "raw_customers:gap",
+   "dataset": "raw_customers",
+   "decision": "auto_fix",
+   "action": "backfill:load_raw_customers",
+   "blast_radius": 2,
+   "rules_passed": 5,
+   "reason": "all rules passed",
+   "result": "fresh",
+   "at": "2026-10-24T09:00:00Z"
+  },
+  {
+   "incident": "raw_payments:stale",
+   "dataset": "raw_payments",
+   "decision": "needs_approval",
+   "action": null,
+   "blast_radius": 2,
+   "rules_passed": 4,
+   "reason": "idempotent: load_raw_payments idempotent=False",
+   "result": "escalated",
+   "at": "2026-10-24T09:00:00Z"
+  },
+  {
+   "incident": "orders:stale",
+   "dataset": "orders",
+   "decision": "suppressed",
+   "action": null,
+   "blast_radius": null,
+   "rules_passed": null,
+   "reason": "downstream of raw_orders",
+   "result": "covered by root",
+   "at": "2026-10-24T09:00:00Z"
+  },
+  {
+   "incident": "payments:stale",
+   "dataset": "payments",
+   "decision": "blocked",
+   "action": null,
+   "blast_radius": null,
+   "rules_passed": null,
+   "reason": "waiting on raw_payments",
+   "result": "still stale",
+   "at": "2026-10-24T09:00:00Z"
+  },
+  {
+   "incident": "revenue_daily:stale",
+   "dataset": "revenue_daily",
+   "decision": "blocked",
+   "action": null,
+   "blast_radius": null,
+   "rules_passed": null,
+   "reason": "waiting on raw_payments",
+   "result": "still stale",
+   "at": "2026-10-24T09:00:00Z"
+  },
+  {
+   "incident": "customer_ltv:stale",
+   "dataset": "customer_ltv",
+   "decision": "suppressed",
+   "action": null,
+   "blast_radius": null,
+   "rules_passed": null,
+   "reason": "downstream of raw_orders",
+   "result": "covered by root",
+   "at": "2026-10-24T09:00:00Z"
+  },
+  {
+   "incident": "raw_payments:stale",
+   "dataset": "raw_payments",
+   "decision": "ai_proposed",
+   "action": "patch:pipelines/load_raw_payments.py",
+   "blast_radius": null,
+   "rules_passed": null,
+   "reason": "all 5 guardrails passed, validation 7/7",
+   "result": "run ai_20261024090000_597d78",
+   "at": "2026-10-24T09:00:00Z"
+  },
+  {
+   "incident": "raw_payments:stale",
+   "dataset": "raw_payments",
+   "decision": "ai_fix",
+   "action": "patch:pipelines/load_raw_payments.py",
+   "blast_radius": null,
+   "rules_passed": null,
+   "reason": "approved by data-eng on-call; validation score 1.00",
+   "result": "healthy",
+   "at": "2026-10-24T09:00:00Z"
+  }
+ ],
+ "policy": {
+  "max_blast_radius": 5,
+  "cooldown_minutes": 30
+ },
+ "ai_config": {
+  "endpoint": "http://127.0.0.1:8787",
+  "model": "sonnet",
+  "eligible_rules": [
+   "idempotent"
+  ],
+  "max_diff_lines": 40,
+  "max_turns": 12,
+  "max_budget_usd": 1.0,
+  "min_score": 1.0,
+  "apply": "approve",
+  "git_branch": true,
+  "git_push": false
+ }
+}

@@ -52,7 +52,7 @@ def last_auto_fix(con, dataset: str) -> datetime | None:
 
 
 def entries(con) -> list[dict]:
-    cur = con.execute('SELECT * FROM audit ORDER BY "at", incident')
+    cur = con.execute('SELECT * FROM audit ORDER BY "at", rowid')
     cols = [c[0] for c in cur.description]
     return [dict(zip(cols, row)) for row in cur.fetchall()]
 
@@ -61,6 +61,6 @@ def latest_states(con) -> dict[str, str]:
     """Each dataset's decision from the most recent cycle that touched it."""
     rows = con.execute(
         'SELECT dataset, decision FROM audit '
-        'QUALIFY row_number() OVER (PARTITION BY dataset ORDER BY "at" DESC) = 1'
+        'QUALIFY row_number() OVER (PARTITION BY dataset ORDER BY "at" DESC, rowid DESC) = 1'
     ).fetchall()
     return dict(rows)

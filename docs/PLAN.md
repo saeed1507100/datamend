@@ -65,6 +65,11 @@ Sessions 1 and 2 are done, except recording the GIF: `docs/demo.tape` is
 ready, run `vhs docs/demo.tape`. In Session 3, OpenLineage input and the web
 view are done. The AWS deploy, demo video, and post are still open.
 
+Session 4 (Oct 24) added platform adapters (DuckDB, DB-API, Airflow, Prefect,
+AWS Glue, Step Functions), real pipeline job files, the guardrailed AI fixer
+with a Claude Code agent endpoint, and the showcase site. Next: deploy the site
+(see DEPLOY.md), and decide whether AI fixes should open pull requests.
+
 ## Session 2 (next Sat) — make it convincing
 
 - Backfill action + gap incident.
