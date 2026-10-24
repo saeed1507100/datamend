@@ -11,6 +11,7 @@ export interface Ai {
   model: string; recorded_at: string;
   explanation: { root_cause: string; fix: string; rationale: string; risk: string; confidence?: number };
   guardrails: Check[]; validation: Check[];
+  trajectory?: TrajectoryStep[]; trajectory_source?: string;
   usage: { backend: string; tools: string[]; num_turns: number; cost_usd: number; duration_ms: number };
 }
 export interface Step {
@@ -29,7 +30,19 @@ export interface AuditEntry {
   incident: string; dataset: string; decision: string; action: string | null;
   blast_radius: number | null; rules_passed: number | null; reason: string; result: string; at: string;
 }
+export type TrajectoryKind = "tool_call" | "message" | "guardrails" | "validation" | "decision";
+export interface TrajectoryStep {
+  n: number; kind: TrajectoryKind; source: string;
+  tool?: string; target?: string; ok?: boolean; result?: string; edit?: { old: string; new: string };
+  text?: string; summary?: string; items?: { name: string; passed: boolean }[];
+}
+export interface FeedbackExample {
+  feedback: { run_id: string; step: number; author: string; text: string };
+  lesson: { lesson_id: string; scope: string; text: string; step: number; step_summary: string };
+  next_prompt_excerpt: string; cli: string[];
+}
 export interface Scenario {
+  feedback_example?: FeedbackExample;
   now: string;
   graph: { nodes: Node[]; edges: { from: string; to: string }[] };
   steps: Step[]; audit: AuditEntry[];

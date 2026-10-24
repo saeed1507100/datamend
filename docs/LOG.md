@@ -6,10 +6,12 @@ What exists, how it got here, and what's next. Newest state first.
 
 | Thing | Where | State |
 | --- | --- | --- |
-| Engine, CLI, AI fixer, remote watcher | `saeed1507100/datamend`, `main` @ `6a65d3f` | 45 tests pass, CI green |
+| Engine, CLI, AI fixer, remote watcher | `saeed1507100/datamend`, `main` (see commits below) | 61 tests pass, CI green |
 | Showcase site | https://datamend.saeedkhan.dev (Vercel project `datamend`, team `saeed-khan`) | Live; auto-deploys from `main` when `site/` or `vercel.json` changes |
 | Demo Prefect pipeline | `saeed1507100/datamend-prefect-demo` (public) | Has a real bug; datamend's fix is PR #1, open and unmerged |
 | First real AI pull request | https://github.com/saeed1507100/datamend-prefect-demo/pull/1 | Validation 1.00 after 2 attempts |
+
+| Portfolio | https://saeedkhan.dev (`career-hq` @ `c44c1d9`) | Lists datamend and Masjid Ledger (masjid-ledger repo is private, so no link) |
 
 DNS: `datamend.saeedkhan.dev` is a CNAME to Vercel at Namecheap. `saeedkhan.dev`
 itself is the `career-hq` Vercel project (the portfolio).
@@ -37,6 +39,15 @@ itself is the `career-hq` Vercel project (the portfolio).
    lives in the pipeline repo's `datamend.yaml`.
 8. **CI fix** (`6a65d3f`). AI commits use a `datamend[bot]` identity; runners have
    no git identity.
+9. **README and diagram** (`45e55d4`). Rewritten for data engineers.
+10. **Landing page** (`3be881b`). Problem, how it works, proof; friendlier replay.
+11. **Confidence gate** (`500946a`). PRs open only above a confidence gate; reviewers
+    requested and PRs labeled.
+12. **Trajectories and lessons** (`3abac4a`). Agent steps captured; reviewer
+    feedback on a step becomes a scoped lesson injected into later prompts.
+13. **`datamend watch airflow`** (`0db0884`). Fixes failed DAG runs in shadow mode.
+14. **Trajectory section on the site**. Timeline of agent steps with diffs and
+    check chips, plus the review-to-lesson loop.
 
 ## Numbers worth quoting
 
@@ -45,6 +56,8 @@ itself is the `career-hq` Vercel project (the portfolio).
   production untouched at 45 rows; shadow schemas dropped.
 - Prefect PR #1: 2 attempts. The first broke the repo's test (`get_run_logger()`
   outside a run); validation fed it back; the second passed.
+- Airflow live fix: 49 s, 7 turns, $0.09, confidence 1.00; production 36 rows untouched.
+- Prefect re-run: 36 s, 10 turns, $0.086, confidence 1.00.
 
 ## Bugs found by running it for real
 
@@ -87,12 +100,12 @@ Ordered. "Needs Saeed" means it can't finish without you.
 
 | # | Step | Needs Saeed | Notes |
 | --- | --- | --- | --- |
-| 1 | README rewrite and architecture diagram | No | Diagram shows human escalation, not AI |
-| 2 | Landing page that sells to data engineers | No | Problem first, then how it works, then proof |
-| 3 | Friendlier UI | No | Clearer replay, plain-language states, mobile |
-| 4 | Real pipelines on Prefect and Airflow | No | Build `watch airflow`; run both locally against real small pipelines |
-| 5 | Confident-only PR scenario | Partly | Expected-vs-actual cross-validation, a confidence gate, notify a reviewer. Needs your choice of channel (GitHub review request works without you; Slack or email needs a webhook) |
-| 6 | Agent trajectory view, feedback, and lessons | No | Capture each tool step; show it as a timeline; reviewers comment on a step; lessons persist and feed later prompts |
+| 1 | ~~README rewrite and architecture diagram~~ Done | No | Diagram shows human escalation, not AI |
+| 2 | ~~Landing page that sells to data engineers~~ Done | No | Problem first, then how it works, then proof |
+| 3 | ~~Friendlier UI~~ Done | No | Clearer replay, plain-language states, mobile |
+| 4 | ~~Real pipelines on Prefect and Airflow~~ Done | No | Build `watch airflow`; run both locally against real small pipelines |
+| 5 | ~~Confident-only PR scenario~~ Done | Partly | Expected-vs-actual cross-validation, a confidence gate, notify a reviewer. Needs your choice of channel (GitHub review request works without you; Slack or email needs a webhook). Done: GitHub review request can't target the PR's own author; Slack/email still needs a webhook |
+| 6 | ~~Agent trajectory view, feedback, and lessons~~ Done | No | Capture each tool step; show it as a timeline; reviewers comment on a step; lessons persist and feed later prompts |
 | 7 | Implementation walkthrough | Yes | Interactive session with you |
 | 8 | Videos | Partly | Scripted screen recordings can be drafted; narration and final cut are yours |
-| 9 | Publish under saeedkhan.dev projects | Yes | Change in the `career-hq` repo; needs your OK to push |
+| 9 | ~~Publish under saeedkhan.dev projects~~ Done | No | `career-hq` `c44c1d9` lists datamend and Masjid Ledger |

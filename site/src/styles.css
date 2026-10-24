@@ -225,3 +225,33 @@ footer { border-top: 1px solid var(--line); padding: 28px 20px 48px; color: var(
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Agent trajectory */
+.traj-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.recon { font-size: 13px; color: var(--muted); background: var(--warn-bg); border-radius: 8px; padding: 8px 12px; margin: 0 0 16px; }
+.timeline { list-style: none; padding: 0; margin: 0; position: relative; }
+.timeline::before { content: ""; position: absolute; left: 15px; top: 8px; bottom: 8px; width: 2px; background: var(--line); }
+.tl { position: relative; padding: 0 0 14px 44px; min-width: 0; }
+.tl .ico { position: absolute; left: 0; top: 2px; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font: 600 13px var(--mono); background: var(--card); border: 2px solid var(--line); }
+.tl.k-tool_call .ico { border-color: var(--info); color: var(--info); }
+.tl.k-message .ico { border-color: var(--ai); color: var(--ai); }
+.tl.k-guardrails .ico, .tl.k-validation .ico, .tl.k-decision .ico { border-color: var(--ok); color: var(--ok); }
+.tl details, .tl .box { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.tl.pinned details { border-color: var(--accent); }
+.tl summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; font-size: 14px; }
+.tl summary code { overflow-wrap: anywhere; color: var(--fg); }
+.tl .who { font: 500 11px var(--mono); color: var(--muted); }
+.tl-body { margin-top: 10px; font-size: 14px; color: var(--muted); display: grid; gap: 8px; }
+.tl-body p { margin: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 500 11px var(--mono); padding: 2px 8px; border-radius: 999px; background: var(--ok-bg); color: var(--ok); }
+.chip.no { background: var(--bad-bg); color: var(--bad); }
+.comment { margin-top: 8px; border-left: 3px solid var(--accent); background: var(--bg-2); border-radius: 0 8px 8px 0; padding: 8px 12px; font-size: 14px; }
+.comment b { font: 500 12px var(--mono); color: var(--accent-2); display: block; }
+.loop { display: grid; gap: 12px; }
+.loop article { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+.loop h3 { margin: 0 0 6px; font-size: 15px; }
+.loop h3 span { font: 500 12px var(--mono); color: var(--accent); margin-right: 6px; }
+.loop p { margin: 0; font-size: 14px; color: var(--muted); }
+.loop pre { background: var(--bg-2); border-radius: 8px; padding: 10px; margin: 8px 0 0; overflow-x: auto; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 900px) { .traj-grid { grid-template-columns: minmax(0, 1fr); } }
