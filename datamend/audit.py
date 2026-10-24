@@ -28,10 +28,12 @@ def record(con, decision: Decision, result: str, at: datetime) -> None:
     )
 
 
-def record_suppressed(con, incident_id: str, dataset: str, root: str, at: datetime) -> None:
+def record_symptom(con, incident_id: str, dataset: str, decision: str, reason: str,
+                   result: str, at: datetime) -> None:
+    """A stale dataset handled through its root: suppressed (root fixed) or blocked (root escalated)."""
     con.execute(
-        "INSERT INTO audit VALUES (?, ?, 'suppressed', NULL, NULL, NULL, ?, 'covered by root', ?)",
-        [incident_id, dataset, f"downstream of {root}", at],
+        "INSERT INTO audit VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, ?)",
+        [incident_id, dataset, decision, reason, result, at],
     )
 
 

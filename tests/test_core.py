@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import duckdb
 import pytest
 
-from datamend import catalog, engine, lineage, simulate
+from datamend import audit, catalog, checks, engine, lineage, simulate
 from datamend.checks import Incident
 from datamend.policy import decide
 
@@ -78,3 +78,20 @@ def test_cycle_fixes_root_and_escalates_unsafe():
     # raw_orders chain is fresh again; only the escalated chain stays stale.
     again = {d.incident.dataset for d in engine.run_cycle(con, CAT, G, NOW)}
     assert again == {"raw_payments"}
+
+
+def test_dataset_with_escalated_root_is_blocked_not_rerun():
+    con = duckdb.connect()
+    simulate.seed(con, CAT, NOW)
+    for name in ["raw_orders", "raw_payments"]:
+        simulate.inject_stale(con, CAT, name, NOW, lineage.downstream(G, name))
+    engine.run_cycle(con, CAT, G, NOW)
+
+    log = {e["dataset"]: e for e in audit.entries(con)}
+    assert log["revenue_daily"]["decision"] == "blocked"
+    assert log["revenue_daily"]["reason"] == "waiting on raw_payments"
+    assert log["orders"]["decision"] == "suppressed"
+
+    stale_now = {i.dataset for i in checks.run_all(con, CAT, NOW)}
+    assert "revenue_daily" in stale_now
+    assert "orders" not in stale_now
