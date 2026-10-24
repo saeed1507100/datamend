@@ -1,0 +1,27 @@
+[project]
+name = "datamend"
+version = "0.1.0"
+description = "Auto-fix the safe data incidents, escalate the rest, with an audit trail."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "duckdb>=1.1",
+    "networkx>=3.3",
+    "pydantic>=2.8",
+    "pyyaml>=6.0",
+    "typer>=0.12",
+]
+
+[project.scripts]
+datamend = "datamend.cli:app"
+
+[dependency-groups]
+dev = ["pytest>=8.3", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
