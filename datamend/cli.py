@@ -233,3 +233,46 @@ def export_scenario(out: Path = SCENARIO_OUT, recording: Path = RECORDING,
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(data, indent=1, default=str) + "\n")
     typer.echo(f"wrote {len(data['steps'])} steps, {len(data['audit'])} audit entries to {out}")
+
+
+watch_app = typer.Typer(no_args_is_help=True, help="Watch a remote orchestrator and fix failures by PR.")
+app.add_typer(watch_app, name="watch")
+REPO = typer.Option(..., envvar="DATAMEND_REPO", help="GitHub repo, owner/name")
+CLONE_URL = typer.Option(None, envvar="DATAMEND_CLONE_URL",
+                         help="Clone/push URL (default https://github.com/<repo>.git)")
+BASE = typer.Option("main", envvar="DATAMEND_BASE", help="Base branch for pull requests")
+STATE = typer.Option(Path(".datamend/remote.duckdb"), envvar="DATAMEND_STATE")
+REMOTE_RUNS = typer.Option(Path(".datamend/remote"), envvar="DATAMEND_REMOTE_RUNS")
+LOOKBACK = typer.Option(24, help="Hours of failed runs to consider")
+PUBLISH = typer.Option(True, help="Push the branch and open the PR")
+AGENT_ENDPOINT = typer.Option("http://127.0.0.1:8787", envvar="DATAMEND_AGENT_ENDPOINT")
+
+
+@watch_app.command("prefect")
+def watch_prefect(repo: str = REPO, clone_url: str | None = CLONE_URL, base: str = BASE,
+                  state: Path = STATE, runs_dir: Path = REMOTE_RUNS, lookback_hours: int = LOOKBACK,
+                  publish: bool = PUBLISH, replay: Path | None = REPLAY,
+                  agent_endpoint: str = AGENT_ENDPOINT):
+    """One pass: find failed Prefect runs, fix them in shadow mode, open pull requests.
+
+    Needs PREFECT_API_URL (and PREFECT_API_KEY for Prefect Cloud), GITHUB_TOKEN,
+    and an agent endpoint (`datamend agent serve`) or --replay.
+    """
+    import os
+
+    from datamend.ai import client
+    from datamend.remote import github, prefect
+    from datamend.remote import watch as remote_watch
+
+    token = os.environ.get("GITHUB_TOKEN")
+    agent = client.ReplayAgent(replay) if replay else client.HttpAgent(agent_endpoint)
+    state.parent.mkdir(parents=True, exist_ok=True)
+    results = remote_watch.watch(
+        source=prefect.PrefectSource(), github=github.GitHub(repo, token) if publish else None,
+        clone_url=clone_url or f"https://github.com/{repo}.git", base=base, agent=agent,
+        state=state, runs_dir=runs_dir.resolve(), now=_now(), lookback_hours=lookback_hours,
+        publish=publish, token=token if not clone_url else None)
+    if not results:
+        typer.echo("no new failures")
+    for r in results:
+        typer.echo(f"{r['run_id']}  {r['status']:<14} {r['deployment']:<24} {r['reason']}")

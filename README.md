@@ -131,6 +131,15 @@ Shipped: DuckDB and any DB-API warehouse; local Python jobs, Airflow, Prefect,
 AWS Glue, and AWS Step Functions orchestrators; lineage from YAML or OpenLineage.
 Details: [docs/ADAPTERS.md](docs/ADAPTERS.md).
 
+## Watch a Prefect workspace
+
+`datamend watch prefect` reads failed flow runs from the Prefect API. For each
+one, it clones the pipeline repo, reproduces the failure in shadow mode, has the
+agent fix it, and validates the fix against the real Prefect variables and data,
+writing only to a throwaway schema. It then compares the result with production
+and opens a pull request with the evidence. The repo declares its shadow contract
+in `datamend.yaml`. Design and status: [docs/REMOTE.md](docs/REMOTE.md).
+
 ## Showcase site
 
 [`site/`](site/) is a static page that replays a real run: load, failures,
