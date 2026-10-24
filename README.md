@@ -2,203 +2,197 @@
 
 [![ci](https://github.com/saeed1507100/datamend/actions/workflows/ci.yml/badge.svg)](https://github.com/saeed1507100/datamend/actions/workflows/ci.yml)
 
-**Auto-fix the safe data incidents, escalate the rest — with an audit trail.**
+**Fix the data incidents that are safe to fix. Escalate the rest. Log every decision.**
 
-When a fix isn't provably safe, a guardrailed AI agent investigates, proposes a
-patch, proves it on a shadow copy of the warehouse, and waits for a person to
-approve it. datamend plugs into DuckDB, Postgres, Airflow, Prefect, and AWS.
+Live replay of a real run: [datamend.saeedkhan.dev](https://datamend.saeedkhan.dev)
 
-`datamend` watches dataset freshness and quality, walks the lineage graph to
-find the blast radius of a failure, and repairs the incidents that are known
-to be safe to repair. Everything else goes to a human. Every decision lands in
-an audit log.
+## The problem
 
-> Status: v0.2 (Oct 2026). Runs end to end on synthetic data. Showcase site in [`site/`](site/).
+If you run a few hundred datasets, you know these:
 
-## Why
+- **Stale and broken datasets go unnoticed.** A table stops loading, and you
+  find out when a stakeholder asks why the dashboard is wrong.
+- **Alerts are noise.** One failed upstream turns ten downstream tables red.
+  You get ten pages for one root cause, and none of them tell you what to do.
+- **On-call reruns make things worse.** You rerun the failed job at 3 a.m. The
+  job appends instead of overwriting, so now revenue is doubled.
 
-Past a few hundred datasets, three things break:
-
-- **Stale data goes unnoticed.** A table stops updating and nobody knows until
-  a dashboard is wrong.
-- **Blast radius is guessed.** When an upstream fails, someone walks the
-  dependency chain by hand to find what else is affected.
-- **Alerts don't fix anything.** Most incidents are routine — a job that needs
-  a re-run, a gap that needs a backfill — yet each one pages a person.
-
-Freshness and data-quality alerting tools exist. Bounded self-correction mostly
-doesn't. That is the gap `datamend` targets.
+Most incidents are routine: a job needs a rerun, or a gap needs a backfill.
+Some are not, and a blind rerun corrupts data. datamend tells the two apart
+before it acts.
 
 ## How it works
 
-```
- datasets.yaml ──► Lineage graph ──► Freshness + DQ checks
- (or OpenLineage)                          │ incident
-                                           ▼
-                                  Guardrail policy
-                                 ┌─────────┴─────────┐
-                           known-safe           anything else
-                                 │                   │
-                          Fix action           needs_approval
-                       (rerun / backfill)       (human queue)
-                                 └─────────┬─────────┘
-                                           ▼
-                                      Audit log
-```
+<p align="center">
+  <img src="docs/architecture.svg" alt="datamend architecture: sources feed checks, lineage, and policy guardrails, which lead to safe auto-fix, human escalation, or blocked, all recorded in an audit log" width="100%">
+</p>
 
-1. **Catalog** — each dataset declares its upstreams, expected cadence, and
-   the checks it must pass.
-2. **Lineage** — dependencies form a directed graph, so `datamend` can answer
-   "what is downstream of this?" and detect cascading staleness.
-3. **Checks** — freshness (last update vs. cadence) and data quality (row
-   count, nulls, schema) raise incidents.
-4. **Guardrails** — a policy decides whether an incident is in a known-safe
-   class. Only then does `datamend` act.
-5. **Audit** — every incident, decision, and action is recorded with the
-   reason.
+1. **Checks.** datamend compares each dataset's last load with its declared
+   cadence and checks row counts for gaps. A failure becomes an incident.
+2. **Lineage root cause and blast radius.** Datasets form a directed graph.
+   datamend walks it to find the furthest-upstream failure and everything
+   downstream of it. You get one incident per root, not one per red table.
+3. **Guardrail policy.** An auto-fix runs only when every rule passes:
 
-## Quickstart
+   | Rule | Why |
+   | --- | --- |
+   | The incident type has a registered fix (`stale` → rerun, `gap` → backfill) | No improvised fixes |
+   | The job is declared idempotent | A rerun must not duplicate data |
+   | The blast radius is under the limit | Wide impact needs a person |
+   | The fix hasn't run within the cooldown window | Stops retry loops |
+   | The dataset isn't tagged `critical: manual` | Owners can opt out |
 
-```bash
-git clone https://github.com/saeed1507100/datamend.git
-cd datamend
-make demo          # seeds synthetic datasets, injects failures, runs a cycle
-```
-
-Or step by step:
-
-```bash
-uv sync
-uv run datamend seed                  # synthetic warehouse + catalog
-uv run datamend inject stale raw_orders     # break something
-uv run datamend inject gap raw_customers    # drop rows
-uv run datamend run                         # check → decide → fix/escalate
-uv run datamend audit                       # what happened and why
-uv run datamend lineage raw_orders          # blast radius
-uv run datamend lineage --mermaid           # whole graph, colored by state
-uv run datamend serve                       # read-only page at 127.0.0.1:8000
-```
-
-`make demo` breaks three datasets. Two are auto-fixed: `raw_orders` (rerun)
-and `raw_customers` (backfill). `raw_payments` escalates because its job isn't
-idempotent. Its downstream datasets are logged as `blocked`, not fixed.
-
-To add lineage from OpenLineage run events, pass a JSON-lines file:
-
-```bash
-uv run datamend lineage raw_payments --events examples/openlineage.jsonl
-```
-
-Only `COMPLETE` events count. Edges to datasets missing from the catalog are
-skipped with a warning.
-
-## AI investigation
-
-`raw_payments` escalates because its job appends a full export on every run, so a
-rerun would duplicate payments and double revenue. `datamend ai investigate`
-sends that incident to a Claude Code agent behind a local, Messages-API-shaped
-endpoint:
-
-```bash
-export DATAMEND_AGENT_TOKEN=$(openssl rand -hex 16)
-uv run datamend agent serve &
-uv run datamend ai investigate raw_payments:stale   # proposed, validation 7/7
-uv run datamend ai approve <run_id> --by you         # branch, apply, rerun, re-check
-```
-
-Or replay a recorded real run without calling a model: `make demo-ai`.
-
-The agent can only read and edit files in a sandbox copy. Its patch must pass
-static guardrails (one file, small diff, allowlisted imports, literal SQL with no
-DDL) and a shadow validation (reruns and backfills change nothing, ids stay
-unique, schema and volume hold, downstream checks pass). Every run, whatever its
-outcome, is recorded with its prompt, explanation, diff, checks, score, cost, and
-approver. Details: [docs/AI.md](docs/AI.md).
-
-## Plug into your platform
-
-datamend needs a `Warehouse` (row count and last load time) and an
-`Orchestrator` (run a job in `rerun` or `backfill` mode). Pick them in
-`datasets.yaml`:
-
-```yaml
-platform:
-  warehouse:    {type: postgres, dsn_env: WAREHOUSE_DSN}
-  orchestrator: {type: airflow, url: https://airflow.internal}
-```
-
-Shipped: DuckDB and any DB-API warehouse; local Python jobs, Airflow, Prefect,
-AWS Glue, and AWS Step Functions orchestrators; lineage from YAML or OpenLineage.
-Details: [docs/ADAPTERS.md](docs/ADAPTERS.md).
-
-## Watch a Prefect workspace
-
-`datamend watch prefect` reads failed flow runs from the Prefect API. For each
-one, it clones the pipeline repo, reproduces the failure in shadow mode, has the
-agent fix it, and validates the fix against the real Prefect variables and data,
-writing only to a throwaway schema. It then compares the result with production
-and opens a pull request with the evidence. The repo declares its shadow contract
-in `datamend.yaml`. Design and status: [docs/REMOTE.md](docs/REMOTE.md).
-
-Example: [a pull request datamend opened](https://github.com/saeed1507100/datamend-prefect-demo/pull/1)
-on [datamend-prefect-demo](https://github.com/saeed1507100/datamend-prefect-demo).
-
-## Showcase site
-
-[`site/`](site/) is a static page that replays a real run: load, failures,
-lineage and blast radius, guardrail decisions, the AI investigation, approval,
-and the audit trail. `uv run datamend export-scenario` regenerates its data from
-the real system. Deployment plan: [docs/DEPLOY.md](docs/DEPLOY.md).
-
-```bash
-cd site && npm install && npm run dev
-```
-
-## The guardrail model
-
-An auto-fix runs only when **all** of these hold:
-
-| Rule | Why |
-| --- | --- |
-| The incident type has a registered fix (`stale → rerun`, `gap → backfill`) | No improvised fixes |
-| The target job is declared idempotent | A re-run must not duplicate data |
-| The blast radius is under the configured limit | Wide impact needs a human |
-| The fix hasn't been tried in the cooldown window | Stops retry loops |
-| The dataset isn't tagged `critical: manual` | Owners can opt out |
-
-Anything that fails a rule becomes `needs_approval`, with the failed rule as
-the reason. Sample audit entry:
+4. **Safe auto-fix or human escalation.** If all rules pass, datamend reruns or
+   backfills the root job and checks the dataset again. If any rule fails, the
+   incident goes to a person with the failed rule as the reason. Datasets that
+   wait on an escalated root are marked `blocked` and never rerun on bad data.
+5. **Audit.** datamend records every incident, decision, rule result, action,
+   and outcome. `datamend audit` shows what happened and why.
 
 ```json
 {"incident": "orders:stale", "decision": "auto_fix", "action": "rerun:load_orders",
  "blast_radius": 3, "rules_passed": 5, "result": "fresh", "at": "2026-10-24T10:42:11Z"}
 ```
 
+## Proof
+
+These numbers come from real runs, not mock-ups. Details are in
+[docs/LOG.md](docs/LOG.md).
+
+- `make demo` breaks 3 datasets. datamend fixes 2 (`raw_orders` by rerun,
+  `raw_customers` by backfill) and escalates `raw_payments`, because its job
+  appends a full export and a rerun would double payments. Its downstream
+  datasets are logged as `blocked`.
+- A failed Prefect flow run (`ValueError` on `'$2,369.53'`) went from failure to
+  a reviewed fix in 12 turns, 39 s, and $0.09. Production stayed at 45 rows,
+  and the throwaway shadow schemas were dropped.
+- The result is [pull request #1 on datamend-prefect-demo](https://github.com/saeed1507100/datamend-prefect-demo/pull/1).
+  The first attempt broke the repo's own test. Validation caught it, and the
+  second attempt passed. datamend opened the PR and stopped there; merging is
+  a human decision.
+- The test suite has 45 tests, and CI is green.
+
+## Quickstart
+
+You need Python 3.12 and [`uv`](https://docs.astral.sh/uv/).
+
+```bash
+git clone https://github.com/saeed1507100/datamend.git
+cd datamend
+make demo      # seed a synthetic warehouse, break 3 datasets, run one cycle
+make demo-ai   # replay a recorded fix proposal for the escalated incident, approve it, re-check
+```
+
+`make demo-ai` replays a recorded run, so it needs no API key or network.
+
+Step by step:
+
+```bash
+uv sync
+uv run datamend seed                       # synthetic warehouse and catalog
+uv run datamend inject stale raw_orders    # break something
+uv run datamend inject gap raw_customers   # drop rows
+uv run datamend run                        # check, decide, fix or escalate
+uv run datamend audit                      # what happened and why
+uv run datamend lineage raw_orders         # blast radius
+uv run datamend lineage --mermaid          # whole graph, colored by state
+uv run datamend serve                      # read-only page at 127.0.0.1:8000
+```
+
+## Adapters
+
+datamend needs two things from your platform: a `Warehouse` that reports row
+counts and last load time, and an `Orchestrator` that runs a job in `rerun` or
+`backfill` mode. You choose them in the `platform:` block of `datasets.yaml`.
+
+| Type | Kind | Notes |
+| --- | --- | --- |
+| `duckdb` | Warehouse | Default for the demo |
+| `postgres` | Warehouse | Any DB-API driver. `uv sync --extra postgres` |
+| `local` | Orchestrator | Python files with `run(con, now, mode)` |
+| `airflow` | Orchestrator | DAG id; `mode` goes in the run `conf`. Airflow 2 and 3 |
+| `prefect` | Orchestrator | `<flow>/<deployment>`; `mode` is a flow parameter |
+| `aws_glue` | Orchestrator | `mode` is passed as `--mode`. `uv sync --extra aws` |
+| `aws_stepfunctions` | Orchestrator | State machine name |
+
+Lineage comes from `datasets.yaml` or from OpenLineage run events
+(`--events events.jsonl`). Configuration examples:
+[docs/ADAPTERS.md](docs/ADAPTERS.md).
+
+```yaml
+platform:
+  warehouse:    {type: postgres, dsn_env: WAREHOUSE_DSN}
+  orchestrator: {type: airflow, url: https://airflow.internal, token_env: AIRFLOW_TOKEN}
+```
+
+## Optional: fix proposals by pull request
+
+When an incident escalates because the job itself is wrong, a person still has
+to fix the code. datamend can help with that step, and it only ever proposes.
+
+`datamend ai investigate` hands the escalated incident to a coding model in a
+sandbox copy of the pipeline. Its patch must pass static guardrails (one file,
+small diff, allowlisted imports, literal SQL with no DDL) and a shadow
+validation: reruns and backfills change nothing, ids stay unique, and schema,
+volume, and downstream checks hold. A person then approves it with
+`datamend ai approve`. See [docs/AI.md](docs/AI.md).
+
+`datamend watch prefect` does the same for remote pipelines. It reads failed
+Prefect runs, reproduces each one against a throwaway schema, validates the
+fix, compares it with production, and opens a pull request with the evidence.
+It never merges and never writes to production. The pipeline repo declares how
+to redirect its writes in `datamend.yaml`. See [docs/REMOTE.md](docs/REMOTE.md).
+
+## Repo layout
+
+```
+datamend/
+├── catalog.py      # load and validate datasets.yaml
+├── checks.py       # freshness and row-count checks → incidents
+├── lineage.py      # graph, root cause, blast radius
+├── policy.py       # guardrail rules → auto_fix or needs_approval
+├── actions.py      # registered fixes: rerun, backfill
+├── engine.py       # one cycle: check → dedupe by root → decide → act → audit
+├── audit.py        # append-only audit log
+├── openlineage.py  # lineage from OpenLineage events
+├── adapters/       # warehouses and orchestrators
+├── ai/             # optional fix proposals: guardrails, validation, approval
+├── remote/         # Prefect watcher: reproduce, validate, open a PR
+└── cli.py          # the datamend command
+examples/           # demo catalog, pipelines, recorded runs
+site/               # static showcase that replays a real run
+tests/              # pytest suite
+docs/               # design notes and the project log
+```
+
+## Docs
+
+- [docs/LOG.md](docs/LOG.md): what exists, how it got here, and what's next.
+- [docs/ADAPTERS.md](docs/ADAPTERS.md): plug datamend into your warehouse and orchestrator.
+- [docs/AI.md](docs/AI.md): fix proposals, guardrails, and the approval step.
+- [docs/REMOTE.md](docs/REMOTE.md): the Prefect watcher and shadow mode.
+- [docs/PLAN.md](docs/PLAN.md): original design and core types.
+- [docs/DEPLOY.md](docs/DEPLOY.md): how the showcase site is deployed.
+
 ## Design decisions
 
-- **A graph, not a dependency list.** Impact analysis and cascading staleness
-  both need traversal. Once a dataset has two upstreams, a lookup table is
-  wrong.
-- **Fix the root, not the symptom.** When several datasets are stale, the
-  graph finds the furthest-upstream failure and fixes only that one.
-- **Never paper over an escalation.** A dataset that depends on an escalated
-  root isn't rerun, even if another of its roots was fixed. It's logged as
-  `blocked`, with the root it waits on.
-- **Allowlist, not denylist.** The agent can only do what is registered as
-  safe. Unknown means escalate.
+- **A graph, not a dependency list.** Blast radius and cascading staleness both
+  need traversal.
+- **Fix the root, not the symptom.** datamend fixes only the furthest-upstream
+  failure.
+- **Never paper over an escalation.** A dataset that waits on an escalated root
+  is `blocked`, even if its other roots were fixed.
+- **Allowlist, not denylist.** datamend does only what is registered as safe.
+  Unknown means escalate.
 - **Audit everything.** An auto-fix nobody can explain is worse than an alert.
 
-## Built from production experience
+## Background
 
-The mechanism comes from a system I built and ran on ~1,250 production
+The approach comes from a system I built and ran on about 1,250 production
 datasets, where freshness and lineage visibility also helped cut storage cost
-by ~93% by safely retiring unused data. This repo is a from-scratch
+by about 93% by retiring unused data safely. This repo is a from-scratch
 reimplementation on synthetic data. It contains no proprietary code, data, or
 company details.
-
-## Roadmap
-
-See [docs/PLAN.md](docs/PLAN.md).
 
 ## License
 

@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" width="1200" height="640" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <filter id="sh" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.08"/>
+    </filter>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748b"/>
+    </marker>
+    <marker id="arg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    <marker id="ara" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d97706"/></marker>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/></marker>
+  </defs>
+  <style>
+    .t{font-size:15px;font-weight:600;fill:#0f172a}
+    .s{font-size:12px;fill:#475569}
+    .h{font-size:12px;font-weight:700;letter-spacing:1.5px;fill:#64748b}
+    .n{font-size:11px;font-weight:700;fill:#ffffff}
+  </style>
+
+  <rect width="1200" height="640" rx="18" fill="#f8fafc"/>
+  <text x="40" y="48" font-size="22" font-weight="700" fill="#0f172a">datamend</text>
+  <text x="148" y="48" font-size="14" fill="#64748b">detect, trace, decide, then fix safely or escalate</text>
+
+  <!-- Group panels -->
+  <rect x="32" y="76" width="250" height="400" rx="14" fill="#eef2f7"/>
+  <text x="52" y="102" class="h">SOURCES</text>
+  <rect x="318" y="76" width="540" height="400" rx="14" fill="#eef2ff"/>
+  <text x="338" y="102" class="h">ENGINE</text>
+  <rect x="890" y="76" width="278" height="400" rx="14" fill="#f1f5f9"/>
+  <text x="910" y="102" class="h">OUTCOMES</text>
+
+  <!-- Sources -->
+  <g filter="url(#sh)">
+    <rect x="52" y="118" width="210" height="76" rx="12" fill="#fff" stroke="#cbd5e1"/>
+    <rect x="52" y="236" width="210" height="52" rx="12" fill="#fff" stroke="#cbd5e1"/>
+    <rect x="52" y="300" width="210" height="52" rx="12" fill="#fff" stroke="#cbd5e1"/>
+    <rect x="52" y="364" width="210" height="52" rx="12" fill="#fff" stroke="#cbd5e1"/>
+  </g>
+  <rect x="52" y="118" width="6" height="76" rx="3" fill="#0ea5e9"/>
+  <text x="72" y="146" class="t">Warehouse</text>
+  <text x="72" y="166" class="s">DuckDB, Postgres, any DB-API</text>
+  <text x="72" y="183" class="s">row counts and last load time</text>
+  <text x="52" y="224" class="h">ORCHESTRATORS</text>
+  <text x="72" y="267" class="t">Prefect</text>
+  <text x="72" y="331" class="t">Airflow</text>
+  <text x="72" y="388" class="t">AWS</text>
+  <text x="72" y="405" class="s">Glue, Step Functions</text>
+  <text x="52" y="452" class="s">Lineage from YAML or OpenLineage</text>
+
+  <!-- Engine cards -->
+  <g filter="url(#sh)">
+    <rect x="338" y="190" width="150" height="170" rx="12" fill="#fff" stroke="#c7d2fe"/>
+    <rect x="514" y="190" width="150" height="170" rx="12" fill="#fff" stroke="#c7d2fe"/>
+    <rect x="688" y="190" width="150" height="170" rx="12" fill="#fff" stroke="#c7d2fe"/>
+  </g>
+  <g>
+    <circle cx="362" cy="216" r="11" fill="#6366f1"/><text x="362" y="220" class="n" text-anchor="middle">1</text>
+    <text x="354" y="256" class="t">Checks</text>
+    <text x="354" y="280" class="s">Freshness vs cadence</text>
+    <text x="354" y="298" class="s">Row-count gaps</text>
+    <text x="354" y="316" class="s">Raise incidents</text>
+
+    <circle cx="538" cy="216" r="11" fill="#6366f1"/><text x="538" y="220" class="n" text-anchor="middle">2</text>
+    <text x="530" y="256" class="t">Lineage graph</text>
+    <text x="530" y="280" class="s">Find the root cause</text>
+    <text x="530" y="298" class="s">Measure blast radius</text>
+    <text x="530" y="316" class="s">One fix per root</text>
+
+    <circle cx="712" cy="216" r="11" fill="#6366f1"/><text x="712" y="220" class="n" text-anchor="middle">3</text>
+    <text x="704" y="256" class="t">Policy guardrails</text>
+    <text x="704" y="280" class="s">Registered fix only</text>
+    <text x="704" y="298" class="s">Idempotent job</text>
+    <text x="704" y="316" class="s">Radius, cooldown,</text>
+    <text x="704" y="334" class="s">owner opt-out</text>
+  </g>
+  <text x="338" y="410" class="s">Unknown means escalate. Every rule must pass before</text>
+  <text x="338" y="428" class="s">datamend touches a job.</text>
+
+  <!-- Engine arrows -->
+  <path d="M290,275 L332,275" stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+  <path d="M490,275 L510,275" stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+  <path d="M664,275 L684,275" stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+
+  <!-- Outcomes -->
+  <g filter="url(#sh)">
+    <rect x="910" y="118" width="238" height="96" rx="12" fill="#f0fdf4" stroke="#86efac"/>
+    <rect x="910" y="234" width="238" height="96" rx="12" fill="#fffbeb" stroke="#fcd34d"/>
+    <rect x="910" y="350" width="238" height="96" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+  </g>
+  <text x="928" y="146" class="t" fill="#166534" style="fill:#166534">Safe auto-fix</text>
+  <text x="928" y="168" class="s">Rerun or backfill the root job,</text>
+  <text x="928" y="186" class="s">then re-check the dataset</text>
+  <text x="928" y="262" class="t" style="fill:#92400e">Human escalation</text>
+  <text x="928" y="284" class="s">A rule failed. The owner gets</text>
+  <text x="928" y="302" class="s">the incident and the reason.</text>
+  <text x="928" y="378" class="t" style="fill:#334155">Blocked or suppressed</text>
+  <text x="928" y="400" class="s">Waits on an escalated root,</text>
+  <text x="928" y="418" class="s">or in cooldown. No rerun on bad data.</text>
+
+  <path d="M838,275 C866,275 870,166 904,166" stroke="#16a34a" stroke-width="2" fill="none" marker-end="url(#arg)"/>
+  <path d="M838,275 C866,275 870,282 904,282" stroke="#d97706" stroke-width="2" fill="none" marker-end="url(#ara)"/>
+  <path d="M838,275 C866,275 870,398 904,398" stroke="#94a3b8" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+
+  <!-- Audit -->
+  <path d="M1029,446 L1029,504" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 5" fill="none" marker-end="url(#arr)"/>
+  <path d="M588,476 L588,504" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 5" fill="none" marker-end="url(#arr)"/>
+  <g filter="url(#sh)">
+    <rect x="32" y="510" width="1136" height="90" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  </g>
+  <rect x="32" y="510" width="8" height="90" rx="4" fill="#475569"/>
+  <text x="60" y="544" class="t">Audit log</text>
+  <text x="60" y="568" class="s">Every incident, decision, rule result, action, and outcome, with the reason. Append-only, queryable with</text>
+  <text x="60" y="586" class="s">datamend audit. An auto-fix nobody can explain is worse than an alert.</text>
+</svg>
