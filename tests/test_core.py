@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import duckdb
 import pytest
 
-from datamend import audit, catalog, checks, engine, lineage, openlineage, simulate, web
+from datamend import adapters, audit, catalog, checks, engine, lineage, openlineage, simulate, web
 from datamend.checks import Incident
 from datamend.policy import decide
 
@@ -67,7 +67,8 @@ def test_gap_is_backfilled_once():
     [d] = engine.run_cycle(con, CAT, G, NOW)
     assert (d.incident.id, d.action) == ("raw_customers:gap", "backfill:load_raw_customers")
     assert con.execute("SELECT count(*), count(DISTINCT id) FROM raw_customers").fetchone() == (200, 200)
-    assert simulate.fill_missing(con, "raw_customers", NOW) == 0
+    adapters.build(CAT, con).orchestrator.trigger(CAT.get("raw_customers"), "backfill", NOW)
+    assert con.execute("SELECT count(*) FROM raw_customers").fetchone() == (200,)
     assert engine.run_cycle(con, CAT, G, NOW) == []
 
 
@@ -104,7 +105,7 @@ def test_dataset_with_escalated_root_is_blocked_not_rerun():
     assert log["revenue_daily"]["reason"] == "waiting on raw_payments"
     assert log["orders"]["decision"] == "suppressed"
 
-    stale_now = {i.dataset for i in checks.run_all(con, CAT, NOW)}
+    stale_now = {i.dataset for i in checks.run_all(adapters.build(CAT, con).warehouse, CAT, NOW)}
     assert "revenue_daily" in stale_now
     assert "orders" not in stale_now
 

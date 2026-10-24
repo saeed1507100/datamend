@@ -3,9 +3,9 @@
 from datetime import datetime, timedelta
 from typing import Literal
 
-import duckdb
 from pydantic import BaseModel
 
+from datamend.adapters import Warehouse
 from datamend.catalog import Catalog
 
 Kind = Literal["stale", "gap", "dq"]
@@ -22,10 +22,10 @@ class Incident(BaseModel):
         return f"{self.dataset}:{self.kind}"
 
 
-def run_all(con: duckdb.DuckDBPyConnection, catalog: Catalog, now: datetime) -> list[Incident]:
+def run_all(warehouse: Warehouse, catalog: Catalog, now: datetime) -> list[Incident]:
     incidents = []
     for d in catalog.datasets:
-        rows, last = con.execute(f'SELECT count(*), max(_loaded_at) FROM "{d.name}"').fetchone()
+        rows, last = warehouse.stats(d)
         if last is None or now - last > timedelta(minutes=d.cadence_minutes):
             age = "never loaded" if last is None else f"{int((now - last).total_seconds() // 60)} min old"
             incidents.append(Incident(dataset=d.name, kind="stale",

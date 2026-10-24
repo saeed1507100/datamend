@@ -37,6 +37,14 @@ def record_symptom(con, incident_id: str, dataset: str, decision: str, reason: s
     )
 
 
+def record_ai(con, incident_id: str, dataset: str, decision: str, action: str, reason: str,
+              result: str, at: datetime) -> None:
+    con.execute(
+        "INSERT INTO audit VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+        [incident_id, dataset, decision, action, reason, result, at],
+    )
+
+
 def last_auto_fix(con, dataset: str) -> datetime | None:
     return con.execute(
         "SELECT max(\"at\") FROM audit WHERE dataset = ? AND decision = 'auto_fix'", [dataset]

@@ -4,13 +4,16 @@ from datetime import datetime
 
 import networkx as nx
 
-from datamend import actions, audit, checks, lineage, policy
+from datamend import actions, adapters, audit, checks, lineage, policy
 from datamend.catalog import Catalog
 
 
-def run_cycle(con, catalog: Catalog, g: nx.DiGraph, now: datetime) -> list[policy.Decision]:
+def run_cycle(con, catalog: Catalog, g: nx.DiGraph, now: datetime,
+              platform: adapters.Platform | None = None) -> list[policy.Decision]:
+    """`con` holds datamend's own state (the audit log). `platform` is the data platform."""
+    platform = platform or adapters.build(catalog, con)
     audit.init(con)
-    incidents = checks.run_all(con, catalog, now)
+    incidents = checks.run_all(platform.warehouse, catalog, now)
     stale = {i.dataset for i in incidents if i.kind == "stale"}
     roots = lineage.root_causes(g, stale)
     symptoms = [i for i in incidents if i.kind == "stale" and i.dataset not in roots]
@@ -33,8 +36,10 @@ def run_cycle(con, catalog: Catalog, g: nx.DiGraph, now: datetime) -> list[polic
         result = "escalated"
         if d.verdict == "auto_fix":
             fix = d.action.split(":")[0]
-            runnable = [n for n in lineage.downstream(g, d.incident.dataset) if n not in blocked]
-            result = actions.ACTIONS[fix](con, d.incident.dataset, runnable, now)
+            runnable = [catalog.get(n) for n in lineage.downstream(g, d.incident.dataset)
+                        if n not in blocked]
+            result = actions.ACTIONS[fix](platform.orchestrator, catalog.get(d.incident.dataset),
+                                          runnable, now)
         audit.record(con, d, result, now)
 
     for inc in symptoms:

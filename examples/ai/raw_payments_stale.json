@@ -1,0 +1,38 @@
+{
+  "about": "A real run of `datamend ai investigate raw_payments:stale` against the Claude Code CLI agent endpoint, recorded for replay in CI and on the showcase site.",
+  "recorded_run_id": "ai_20261024055804_1e6e0d",
+  "recorded_at": "2026-10-24T05:58:04.620665Z",
+  "model": "sonnet",
+  "response": {
+    "type": "message",
+    "role": "assistant",
+    "model": "sonnet",
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"root_cause\": \"load_raw_payments did a plain INSERT of the full 200-row export (ids 0..199) into raw_payments on every run, with no delete or dedupe. Each rerun or backfill appended another 200 rows, so ids were duplicated. Downstream, payments copies raw_payments as is, and revenue_daily sums payments.amount, so revenue would be multiplied by the number of runs.\", \"fix\": \"In pipelines/load_raw_payments.py, the load now runs in one transaction. It deletes all rows from raw_payments, inserts the 200-row export, and commits. It rolls back and re-raises on error. The schema and columns are unchanged.\", \"rationale\": \"The export is always the full day's snapshot, so a full replace is the natural idempotent load. It also removes duplicates already left by earlier reruns, which an insert-only-missing-ids approach would keep. The transaction means a failed run can't leave the table empty or half-loaded. I did not add a primary key or change the schema, since that is out of scope. I did not use a per-day partition delete, since the table has no date key apart from _loaded_at.\", \"risk\": \"low. Rows are identical across runs except _loaded_at, which is set to the new run's timestamp. A check that compares _loaded_at would see a difference. If the real export ever stops being the full set of ids, the full delete would drop the rows missing from it. I could not run the code, so the DuckDB transaction handling is unvalidated. If the runner already wraps the job in a transaction, the nested BEGIN would fail.\", \"confidence\": 0.85}"
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 8,
+      "output_tokens": 1921
+    },
+    "datamend": {
+      "backend": "claude-code-cli",
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit"
+      ],
+      "num_turns": 6,
+      "cost_usd": 0.034207,
+      "duration_ms": 20680,
+      "subtype": "success"
+    }
+  },
+  "files": {
+    "pipelines/load_raw_payments.py": "\"\"\"Load the payment provider's daily export into raw_payments.\"\"\"\n\n\ndef run(con, now, mode):\n    con.execute(\n        \"CREATE TABLE IF NOT EXISTS raw_payments \"\n        \"(id INTEGER, amount DECIMAL(10, 2), _loaded_at TIMESTAMP)\"\n    )\n    # The export always holds the full day: payment ids 0..199.\n    # Replace the snapshot atomically so reruns and backfills don't append duplicates.\n    con.execute(\"BEGIN TRANSACTION\")\n    try:\n        con.execute(\"DELETE FROM raw_payments\")\n        con.execute(\n            \"INSERT INTO raw_payments SELECT range, 10 + range % 90, ? FROM range(200)\",\n            [now],\n        )\n        con.execute(\"COMMIT\")\n    except Exception:\n        con.execute(\"ROLLBACK\")\n        raise\n"
+  }
+}

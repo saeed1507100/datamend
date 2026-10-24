@@ -1,23 +1,19 @@
-"""Synthetic warehouse in DuckDB: one table per dataset, each row stamped with _loaded_at."""
+"""Synthetic warehouse: seed it by running every job, then break it on purpose."""
 
 from datetime import datetime, timedelta
 
 import duckdb
+import networkx as nx
 
+from datamend import adapters, lineage
 from datamend.catalog import Catalog
-
-SEED_ROWS = 200
-
-
-def load_rows(con: duckdb.DuckDBPyConnection, name: str, at: datetime, rows: int = SEED_ROWS):
-    """Replace a table's contents: what an idempotent job run does."""
-    con.execute(f'CREATE OR REPLACE TABLE "{name}" (id INTEGER, _loaded_at TIMESTAMP)')
-    con.execute(f'INSERT INTO "{name}" SELECT range, ? FROM range(?)', [at, rows])
 
 
 def seed(con: duckdb.DuckDBPyConnection, catalog: Catalog, now: datetime) -> None:
-    for d in catalog.datasets:
-        load_rows(con, d.name, now)
+    """Run every job once, upstream first."""
+    orch = adapters.build(catalog, con).orchestrator
+    for name in nx.topological_sort(lineage.build(catalog)):
+        orch.trigger(catalog.get(name), "rerun", now)
 
 
 def inject_stale(con, catalog: Catalog, name: str, now: datetime, affected: list[str]) -> None:
@@ -29,12 +25,3 @@ def inject_stale(con, catalog: Catalog, name: str, now: datetime, affected: list
 
 def inject_gap(con, name: str, keep_rows: int = 10) -> None:
     con.execute(f'DELETE FROM "{name}" WHERE id >= ?', [keep_rows])
-
-
-def fill_missing(con, name: str, at: datetime, rows: int = SEED_ROWS) -> int:
-    """Insert the ids a gap removed. Re-running it inserts nothing, so it is idempotent."""
-    before = con.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]
-    con.execute(
-        f'INSERT INTO "{name}" SELECT range, ? FROM range(?) '
-        f'WHERE range NOT IN (SELECT id FROM "{name}")', [at, rows])
-    return con.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0] - before

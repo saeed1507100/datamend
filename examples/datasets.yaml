@@ -3,6 +3,11 @@ policy:
   max_blast_radius: 5
   cooldown_minutes: 30
 
+# Swap these to plug into another platform. See docs/ADAPTERS.md.
+platform:
+  warehouse: {type: duckdb}
+  orchestrator: {type: local, pipelines: pipelines}
+
 datasets:
   - {name: raw_orders,    cadence_minutes: 60,  job: load_raw_orders,    checks: {min_rows: 100}}
   - {name: raw_customers, cadence_minutes: 360, job: load_raw_customers, checks: {min_rows: 50}}

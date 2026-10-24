@@ -13,6 +13,10 @@ dependencies = [
     "typer>=0.12",
 ]
 
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2"]
+aws = ["boto3>=1.35"]
+
 [project.scripts]
 datamend = "datamend.cli:app"
 

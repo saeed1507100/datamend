@@ -118,3 +118,101 @@ def serve(port: int = 8000, db: Path = DB, catalog: Path = CATALOG, events: Path
     """Serve a read-only page: lineage graph and audit log."""
     typer.echo(f"serving http://127.0.0.1:{port}")
     web.serve(_load(catalog, events), db, port)
+
+
+ai_app = typer.Typer(no_args_is_help=True, help="Investigate escalated incidents with an AI agent.")
+agent_app = typer.Typer(no_args_is_help=True, help="The local agent endpoint (Claude Code CLI).")
+app.add_typer(ai_app, name="ai")
+app.add_typer(agent_app, name="agent")
+RUNS = typer.Option(Path(".datamend/ai"), envvar="DATAMEND_AI_RUNS", help="AI run folders")
+REPLAY = typer.Option(None, help="Replay a recorded agent run instead of calling one")
+BY = typer.Option(..., help="Who decides; recorded in the audit trail")
+REASON = typer.Option(..., help="Why; recorded in the audit trail")
+BARE = typer.Option(False, help="claude --bare (needs ANTHROPIC_API_KEY)")
+
+
+def _print_run(r: dict) -> None:
+    typer.echo(f"{r['run_id']}  {r['status']}  {r['incident']}")
+    typer.echo(f"  reason: {r['status_reason']}")
+    expl = json.loads(r.get("explanation") or "null") or {}
+    for key in ("root_cause", "fix", "rationale", "risk"):
+        if key in expl:
+            typer.echo(f"  {key}: {expl[key]}")
+    for g in json.loads(r.get("guardrails") or "[]"):
+        typer.echo(f"  guardrail {'PASS' if g['passed'] else 'FAIL'} {g['rule']}: {g['detail']}")
+    for v in json.loads(r.get("validation") or "[]"):
+        typer.echo(f"  validate  {'PASS' if v['passed'] else 'FAIL'} {v['check']}: {v['detail']}")
+    if r.get("score") is not None:
+        typer.echo(f"  score: {r['score']:.2f}")
+    if r.get("diff"):
+        typer.echo(r["diff"])
+    if r.get("result"):
+        typer.echo(f"  result: {r['result']}  commit: {r.get('commit_ref')}")
+
+
+@ai_app.command()
+def investigate(
+    incident: str,
+    replay: Path | None = REPLAY,
+    db: Path = DB, catalog: Path = CATALOG, runs: Path = RUNS,
+):
+    """Ask the agent to find and fix why INCIDENT (e.g. raw_payments:stale) was escalated."""
+    from datamend.ai import client, fixer
+
+    c = cat.load(catalog)
+    agent = client.ReplayAgent(replay) if replay else client.HttpAgent(c.ai.endpoint)
+    with duckdb.connect(str(db)) as con:
+        _print_run(fixer.investigate(con, c, incident, agent, _now(), runs))
+
+
+@ai_app.command()
+def approve(run_id: str, by: str = BY,
+            db: Path = DB, catalog: Path = CATALOG, runs: Path = RUNS):
+    """Apply a proposed fix: patch, git branch, rerun, re-check, audit."""
+    from datamend.ai import fixer
+
+    with duckdb.connect(str(db)) as con:
+        _print_run(fixer.approve(con, cat.load(catalog), run_id, by, _now(), runs))
+
+
+@ai_app.command()
+def reject(run_id: str, by: str = BY, reason: str = REASON,
+           db: Path = DB):
+    """Reject a proposed fix. It stays in the audit trail."""
+    from datamend.ai import fixer
+
+    with duckdb.connect(str(db)) as con:
+        _print_run(fixer.reject(con, run_id, by, reason, _now()))
+
+
+@ai_app.command()
+def show(run_id: str, db: Path = DB):
+    """Everything about one AI run: explanation, guardrails, validation, diff, result."""
+    from datamend.ai import fixer
+
+    with duckdb.connect(str(db)) as con:
+        r = fixer.get(con, run_id)
+    if r is None:
+        raise typer.BadParameter(f"no run {run_id}")
+    _print_run(r)
+
+
+@ai_app.command("list")
+def list_runs(db: Path = DB):
+    """All AI runs, oldest first."""
+    from datamend.ai import fixer
+
+    with duckdb.connect(str(db)) as con:
+        for r in fixer.runs(con):
+            typer.echo(f"{r['run_id']}  {r['status']:<9} {r['incident']:<22} {r['status_reason']}")
+
+
+@agent_app.command("serve")
+def agent_serve(port: int = 8787, workspace_root: Path = RUNS,
+                bare: bool = BARE):
+    """Serve POST /v1/messages on 127.0.0.1, backed by `claude -p` in a locked-down sandbox."""
+    from datamend.ai import server
+
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    typer.echo(f"agent endpoint on http://127.0.0.1:{port}/v1/messages")
+    server.serve(port, workspace_root, bare=bare)
