@@ -35,8 +35,18 @@ class GitHub:
                 return pr["html_url"]
         return None
 
-    def create_pr(self, branch: str, base: str, title: str, body: str, draft: bool = False) -> str:
-        pr = self.send("POST", f"{self.api}/repos/{self.repo}/pulls",
-                       {"title": title, "head": branch, "base": base, "body": body,
-                        "draft": draft, "maintainer_can_modify": True}, self.headers)
-        return pr["html_url"]
+    def create_pr(self, branch: str, base: str, title: str, body: str, draft: bool = False) -> dict:
+        """The created pull request; `html_url` and `number` are the useful fields."""
+        return self.send("POST", f"{self.api}/repos/{self.repo}/pulls",
+                         {"title": title, "head": branch, "base": base, "body": body,
+                          "draft": draft, "maintainer_can_modify": True}, self.headers)
+
+    def request_reviewers(self, number: int, reviewers: list[str],
+                          team_reviewers: list[str] | None = None) -> dict:
+        body = {"reviewers": reviewers, **({"team_reviewers": team_reviewers} if team_reviewers else {})}
+        return self.send("POST", f"{self.api}/repos/{self.repo}/pulls/{number}/requested_reviewers",
+                         body, self.headers)
+
+    def add_labels(self, number: int, labels: list[str]) -> list:
+        return self.send("POST", f"{self.api}/repos/{self.repo}/issues/{number}/labels",
+                         {"labels": labels}, self.headers)

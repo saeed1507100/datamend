@@ -72,15 +72,55 @@ but writes somewhere else. Each deployment declares how in `datamend.yaml`:
 ```yaml
 deployments:
   orders-etl/daily:
+    prod_schema: analytics
     shadow:
       parameters: {target_schema: "dm_shadow_{run}"}   # the flow writes here instead
+      schema_name: "dm_shadow_{run}"
     compare:
-      - {prod: analytics.orders, shadow: "dm_shadow_{run}.orders", key: order_id}
+      - table: orders
+        key: order_id
+        expectations:                  # what the patched output must look like
+          row_count: at_least_prod     # or: prod (equal), or a number
+          keys: superset_of_prod       # or: prod (same key set)
+          nulls: {order_id: 0, amount: prod}   # at most this many nulls
+          sums_within: {amount: 0.001}         # relative tolerance, on keys in both tables
     allowed_paths: ["flows/**", "etl/**"]
+limits:
+  min_confidence: 1.0                  # below this, escalate instead of opening a PR
+reviewers: [saeed1507100]              # GitHub logins asked to review every PR
+labels: [datamend]
 ```
 
 If a flow can't be redirected by a parameter, datamend refuses to validate it and
 says why. That's the contract a team signs up to: make outputs redirectable.
+
+## Confidence gate and reviewers
+
+datamend opens a pull request only when it's confident. After the patched flow passes
+every hard validation check, datamend computes a confidence score from all the
+evidence it has:
+
+| Evidence | Weight | Example |
+| --- | --- | --- |
+| Hard validation check | 1 | `shadow_run`, `idempotent_rerun`, `tests`, `orders.unique_key` |
+| Expectation from `datamend.yaml` | 1 | `orders.expect_keys`: every production key is present |
+| Soft comparison check | 0.5 | `orders.volume`: row count moved more than `max_row_delta` |
+| Agent's own confidence | 0 | Shown for context, never counted |
+
+The score is the weighted share of passing items. If it's below
+`limits.min_confidence` (default 1.0), datamend feeds the failing items back to the
+agent for another attempt. If the last attempt still passes validation but falls
+short, the run ends as `escalated`, with the reasons, and no pull request. An
+escalated signature isn't investigated again.
+
+Expectations compare expected with actual values on the shadow output, on top of the
+production comparison. Sums compare only rows whose key is in both tables, so a fix
+that recovers rows that used to fail can still match production on the rest.
+
+When datamend opens a pull request, it requests a review from each login in
+`reviewers` and adds `labels`. The PR body has an expectations table and the full
+confidence breakdown. If GitHub refuses a review request (for example, the reviewer
+is the PR's author), the PR stays open and the error is in the run's `review` field.
 
 ## Interfaces
 

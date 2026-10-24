@@ -131,3 +131,95 @@ def test_watch_takes_newest_failure_per_deployment_and_skips_handled(tmp_path, m
     assert [r["flow_run_id"] for r in watch.watch(**kw)] == ["0", "2"]
     assert watch.watch(**kw) == []  # both signatures already have PRs
     assert seen == ["0", "2"]
+
+
+def _tables(con):
+    con.execute("CREATE SCHEMA analytics; CREATE SCHEMA dm_shadow_1")
+    con.execute("CREATE TABLE analytics.orders AS SELECT range AS order_id, 10.0 AS amount, "
+                "'x' AS customer FROM range(45)")
+    con.execute("CREATE TABLE dm_shadow_1.orders AS SELECT range AS order_id, 10.0 AS amount, "
+                "'x' AS customer FROM range(50)")
+
+
+def test_expectations_check_expected_against_actual():
+    from datamend.remote.config import Expectations
+
+    con = duckdb.connect()
+    _tables(con)
+    spec = Compare(table="orders", key="order_id", expectations=Expectations(
+        row_count="at_least_prod", keys="superset_of_prod", nulls={"amount": 0},
+        sums_within={"amount": 0.001}))
+    out = compare.compare_table(con, "analytics", "dm_shadow_1", spec, 0.25)
+    assert [(e["check"], e["passed"]) for e in out["expectations"]] == [
+        ("orders.expect_row_count", True), ("orders.expect_keys", True),
+        ("orders.expect_nulls_amount", True), ("orders.expect_sum_amount", True)]
+    assert "on shared keys" in out["expectations"][-1]["expected"]
+
+    strict = Compare(table="orders", key="order_id",
+                     expectations=Expectations(row_count="prod", keys="prod"))
+    out = compare.compare_table(con, "analytics", "dm_shadow_1", strict, 0.25)
+    assert [e["passed"] for e in out["expectations"]] == [False, False]
+    assert out["expectations"][1]["actual"] == "0 missing, 5 extra"
+
+    con.execute("UPDATE dm_shadow_1.orders SET amount = 20 WHERE order_id = 1")
+    drift = Compare(table="orders", key="order_id",
+                    expectations=Expectations(sums_within={"amount": 0.001}))
+    [e] = compare.compare_table(con, "analytics", "dm_shadow_1", drift, 0.25)["expectations"]
+    assert not e["passed"] and "+2.22%" in e["actual"]
+
+
+def test_confidence_weighs_hard_soft_and_expectations():
+    checks = [{"check": "shadow_run", "passed": True, "detail": "ok", "hard": True},
+              {"check": "orders.volume", "passed": False, "detail": "+30%", "hard": False}]
+    comparison = [{"table": "orders", "expectations": [
+        {"check": "orders.expect_keys", "passed": True, "detail": "ok"}]}]
+    score, items = watch.confidence(checks, comparison, {"confidence": 0.9})
+    assert score == round(2 / 2.5, 4)
+    assert [i["source"] for i in items] == ["validation", "comparison", "expectation", "agent"]
+    assert watch.confidence(checks[:1], comparison)[0] == 1.0
+
+
+class FakeGitHub:
+    """GitHub client over a fake transport that records every request."""
+
+    def __init__(self, fail_reviewers=False):
+        from datamend.remote.github import GitHub
+
+        self.calls = []
+
+        def send(method, url, body, headers):
+            self.calls.append((method, url.removeprefix("https://api.github.com"), body))
+            if url.endswith("/requested_reviewers"):
+                if fail_reviewers:
+                    raise RuntimeError("HTTP 422: review cannot be requested from pull request author")
+                return {"requested_reviewers": [{"login": r} for r in body["reviewers"]]}
+            if url.endswith("/pulls") and method == "POST":
+                return {"number": 7, "html_url": "https://github.com/o/r/pull/7"}
+            return []
+
+        self.gh = GitHub("o/r", token="t", send=send)
+
+
+def test_pr_requests_reviewers_and_labels():
+    fake = FakeGitHub()
+    pr = fake.gh.create_pr("datamend/fix", "main", "t", "b")
+    review = watch.request_review(fake.gh, pr["number"], ["saeed1507100"], ["datamend"])
+    assert review["requested"] == ["saeed1507100"] and not review["errors"]
+    assert fake.calls[1:] == [
+        ("POST", "/repos/o/r/pulls/7/requested_reviewers", {"reviewers": ["saeed1507100"]}),
+        ("POST", "/repos/o/r/issues/7/labels", {"labels": ["datamend"]})]
+
+    failing = FakeGitHub(fail_reviewers=True)
+    review = watch.request_review(failing.gh, 7, ["me"], ["datamend"])
+    assert review["requested"] == [] and "422" in review["errors"][0]
+    assert failing.calls[-1][1] == "/repos/o/r/issues/7/labels"  # labels still applied
+
+
+def test_pr_body_shows_confidence_breakdown():
+    run = FailedRun(id="1", name="n", deployment="d/x", entrypoint="f.py:f", parameters={},
+                    state_type="FAILED", message="ValueError: bad", start_time=None)
+    score, items = watch.confidence([{"check": "shadow_run", "passed": True, "detail": "ok"}], [])
+    row = {"run_id": "rm_1", "signature": "s", "score": 1.0, "attempts": 1, "explanation": EXPL,
+           "validation": [], "comparison": [], "guardrails": [], "confidence": score,
+           "confidence_breakdown": items, "min_confidence": 1.0}
+    assert "### Confidence: 1.00 (PRs open only at 1.00 or above)" in watch.pr_body(run, row, "")

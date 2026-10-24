@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS remote_runs (
     created_at TIMESTAMP, finished_at TIMESTAMP
 )
 """
+# Columns added after the first release; ADD COLUMN IF NOT EXISTS upgrades old state DBs.
+COLUMNS = {"confidence": "DOUBLE", "confidence_breakdown": "JSON", "review": "JSON"}
 
 SYSTEM = """You are a data reliability engineer. A production data pipeline failed. You are
 in a sandbox clone of its repository. You may read any file and edit only the allowed
@@ -56,6 +58,8 @@ def signature(deployment: str, message: str) -> str:
 
 def init(con) -> None:
     con.execute(SCHEMA)
+    for col, typ in COLUMNS.items():
+        con.execute(f"ALTER TABLE remote_runs ADD COLUMN IF NOT EXISTS {col} {typ}")
 
 
 def _save(con, row: dict) -> None:
@@ -203,6 +207,44 @@ def validate(shadow: Shadow, tag: str) -> tuple[list[dict], list[dict]]:
     return checks, comparison
 
 
+def confidence(checks: list[dict], comparison: list[dict],
+               explanation: dict | None = None) -> tuple[float, list[dict]]:
+    """Weighted share of evidence that passed, with one line per item.
+
+    Hard validation checks and `datamend.yaml` expectations weigh 1; soft comparison checks
+    (volume drift, new nulls) weigh 0.5. The agent's own confidence is shown, not counted.
+    """
+    items = [{"source": "validation" if c.get("hard", True) else "comparison",
+              "check": c["check"], "passed": c["passed"],
+              "weight": 1.0 if c.get("hard", True) else 0.5, "detail": c["detail"]}
+             for c in checks]
+    items += [{"source": "expectation", "check": e["check"], "passed": e["passed"], "weight": 1.0,
+               "detail": e["detail"]} for t in comparison for e in t.get("expectations", [])]
+    total = sum(i["weight"] for i in items)
+    score = sum(i["weight"] for i in items if i["passed"]) / total if total else 0.0
+    if explanation and isinstance(explanation.get("confidence"), (int, float)):
+        items.append({"source": "agent", "check": "self_reported", "passed": True, "weight": 0.0,
+                      "detail": f"agent says {explanation['confidence']:.2f} (not counted)"})
+    return round(score, 4), items
+
+
+def request_review(github, number: int, reviewers: list[str], labels: list[str]) -> dict:
+    """Ask reviewers to look at the PR and label it. Failures are recorded, not raised."""
+    out = {"reviewers": reviewers, "labels": labels, "requested": [], "errors": []}
+    if reviewers:
+        try:
+            got = github.request_reviewers(number, reviewers)
+            out["requested"] = [u["login"] for u in got.get("requested_reviewers", [])]
+        except Exception as exc:  # noqa: BLE001 - a PR without a reviewer is still a PR
+            out["errors"].append(f"request_reviewers: {type(exc).__name__}: {exc}"[:300])
+    if labels:
+        try:
+            github.add_labels(number, labels)
+        except Exception as exc:  # noqa: BLE001
+            out["errors"].append(f"add_labels: {type(exc).__name__}: {exc}"[:300])
+    return out
+
+
 def pr_body(run: FailedRun, row: dict, logs: str) -> str:
     e = row["explanation"]
     lines = [
@@ -215,7 +257,7 @@ def pr_body(run: FailedRun, row: dict, logs: str) -> str:
         "### Why this fix", e["rationale"], "",
         "### Risk", e["risk"], "",
         f"### Validation: score {row['score']:.2f}", "",
-        ("Run in shadow mode against this workspace's real Prefect variables and data, "
+        ("Run in shadow mode against this workspace's real orchestrator variables and data, "
          "writing only to a throwaway schema."), "",
         "| Check | Result | Detail |", "| --- | --- | --- |",
     ]
@@ -226,6 +268,17 @@ def pr_body(run: FailedRun, row: dict, logs: str) -> str:
         lines += ["", f"### Before and after: `{table['table']}`", "",
                   "| Metric | Production (last good load) | This fix (shadow) |", "| --- | --- | --- |"]
         lines += [f"| {m['metric']} | {m['prod']} | {m['shadow']} |" for m in table["metrics"]]
+        if table.get("expectations"):
+            lines += ["", "| Expectation | Expected | Actual | Result |", "| --- | --- | --- | --- |"]
+            lines += [f"| `{e['check']}` | {e['expected']} | {e['actual']} | "
+                      f"{'✅' if e['passed'] else '❌'} |" for e in table["expectations"]]
+    if row.get("confidence_breakdown"):
+        lines += ["", (f"### Confidence: {row['confidence']:.2f} "
+                      f"(PRs open only at {row.get('min_confidence', 1.0):.2f} or above)"), "",
+                  "| Source | Check | Weight | Result |", "| --- | --- | --- | --- |"]
+        lines += [f"| {i['source']} | `{i['check']}` | {i['weight']:g} | "
+                  f"{'✅' if i['passed'] else '❌'} {str(i['detail']).replace('|', '/')} |"
+                  for i in row["confidence_breakdown"]]
     lines += ["", "### Guardrails", ""]
     lines += [f"- {'✅' if g['passed'] else '❌'} `{g['rule']}`: {g['detail']}" for g in row["guardrails"]]
     usage = row.get("usage") or {}
@@ -307,21 +360,31 @@ def investigate(run: FailedRun, *, source: PrefectSource, github, clone_url: str
             continue
         checks, comparison = validate(shadow, f"{tag}{attempt}")
         hard = [c for c in checks if c.get("hard", True)]
+        conf, breakdown = confidence(checks, comparison, explanation)
         row.update(validation=checks, comparison=comparison,
-                   score=sum(c["passed"] for c in hard) / len(hard))
-        if row["score"] == 1.0:
+                   score=sum(c["passed"] for c in hard) / len(hard),
+                   confidence=conf, confidence_breakdown=breakdown)
+        if row["score"] == 1.0 and conf >= cfg.limits.min_confidence:
             break
-        feedback = [f"{c['check']}: {c['detail']}" for c in hard if not c["passed"]]
+        feedback = [f"{i['check']}: {i['detail']}" for i in breakdown
+                    if not i["passed"] and i["weight"] > 0]
     else:
+        if row.get("score") == 1.0:
+            return finish("escalated", f"validation passed but confidence {row['confidence']:.2f} "
+                          f"< {cfg.limits.min_confidence:.2f}; needs a person: "
+                          + "; ".join(feedback)[:600])
         return finish("rejected", f"no passing fix after {cfg.limits.max_attempts} attempts: "
                       + "; ".join(feedback)[:600])
+    row["min_confidence"] = cfg.limits.min_confidence
 
     slug = re.sub(r"[^a-z0-9]+", "-", run.deployment.lower()).strip("-")
     row["branch"] = f"datamend/fix-{slug}-{row['signature'][:6]}"
     body = pr_body(run, row, logs)
+    row.pop("min_confidence")
     (runs_dir / run_id / "PR.md").write_text(body)
     if not publish:
-        return finish("proposed", f"validation {row['score']:.2f}; PR not published (--no-publish), "
+        return finish("proposed", f"validation {row['score']:.2f}, confidence "
+                      f"{row['confidence']:.2f}; PR not published (--no-publish), "
                       f"body in {runs_dir / run_id / 'PR.md'}")
     row["commit_sha"] = ws.commit_and_push(
         row["branch"], changed,
@@ -329,8 +392,12 @@ def investigate(run: FailedRun, *, source: PrefectSource, github, clone_url: str
         f"datamend run {run_id}")
     kind = re.search(r"\b(\w+(?:Error|Exception))\b", run.message)
     title = f"datamend: fix {run.deployment}" + (f" ({kind.group(1)})" if kind else "")
-    row["pr_url"] = github.create_pr(row["branch"], base, title, body)
-    return finish("pr_opened", f"validation {row['score']:.2f}; {row['pr_url']}")
+    pr = github.create_pr(row["branch"], base, title, body)
+    row["pr_url"] = pr["html_url"]
+    row["review"] = request_review(github, pr["number"], cfg.reviewers, cfg.labels)
+    asked = ", ".join(row["review"]["requested"]) or "no reviewer"
+    return finish("pr_opened", f"validation {row['score']:.2f}, confidence "
+                  f"{row['confidence']:.2f}; {row['pr_url']} (review: {asked})")
 
 
 def watch(*, source: PrefectSource, github, clone_url: str, base: str, agent, state: Path,
@@ -340,7 +407,7 @@ def watch(*, source: PrefectSource, github, clone_url: str, base: str, agent, st
     with duckdb.connect(str(state)) as con:
         init(con)
         done = {s for (s,) in con.execute(
-            "SELECT signature FROM remote_runs WHERE status IN ('pr_opened', 'proposed')").fetchall()}
+            "SELECT signature FROM remote_runs WHERE status IN ('pr_opened', 'proposed', 'escalated')").fetchall()}
         seen, results = set(), []
         for run in source.failures(now - timedelta(hours=lookback_hours)):
             sig = signature(run.deployment, run.message)
