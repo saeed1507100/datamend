@@ -367,6 +367,28 @@ PUBLISH = typer.Option(True, help="Push the branch and open the PR")
 AGENT_ENDPOINT = typer.Option("http://127.0.0.1:8787", envvar="DATAMEND_AGENT_ENDPOINT")
 
 
+def _watch(source, repo, clone_url, base, state, runs_dir, lookback_hours, publish, replay,
+           agent_endpoint, lessons) -> None:
+    import os
+
+    from datamend.ai import client
+    from datamend.remote import github
+    from datamend.remote import watch as remote_watch
+
+    token = os.environ.get("GITHUB_TOKEN")
+    agent = client.ReplayAgent(replay) if replay else client.HttpAgent(agent_endpoint)
+    state.parent.mkdir(parents=True, exist_ok=True)
+    results = remote_watch.watch(
+        source=source, github=github.GitHub(repo, token) if publish else None,
+        clone_url=clone_url or f"https://github.com/{repo}.git", base=base, agent=agent,
+        state=state, runs_dir=runs_dir.resolve(), now=_now(), lookback_hours=lookback_hours,
+        publish=publish, token=token if not clone_url else None, lessons=_lessons(lessons))
+    if not results:
+        typer.echo("no new failures")
+    for r in results:
+        typer.echo(f"{r['run_id']}  {r['status']:<14} {r['deployment']:<24} {r['reason']}")
+
+
 @watch_app.command("prefect")
 def watch_prefect(repo: str = REPO, clone_url: str | None = CLONE_URL, base: str = BASE,
                   state: Path = STATE, runs_dir: Path = REMOTE_RUNS, lookback_hours: int = LOOKBACK,
@@ -377,21 +399,30 @@ def watch_prefect(repo: str = REPO, clone_url: str | None = CLONE_URL, base: str
     Needs PREFECT_API_URL (and PREFECT_API_KEY for Prefect Cloud), GITHUB_TOKEN,
     and an agent endpoint (`datamend agent serve`) or --replay.
     """
-    import os
+    from datamend.remote import prefect
 
-    from datamend.ai import client
-    from datamend.remote import github, prefect
-    from datamend.remote import watch as remote_watch
+    _watch(prefect.PrefectSource(), repo, clone_url, base, state, runs_dir, lookback_hours,
+           publish, replay, agent_endpoint, lessons)
 
-    token = os.environ.get("GITHUB_TOKEN")
-    agent = client.ReplayAgent(replay) if replay else client.HttpAgent(agent_endpoint)
-    state.parent.mkdir(parents=True, exist_ok=True)
-    results = remote_watch.watch(
-        source=prefect.PrefectSource(), github=github.GitHub(repo, token) if publish else None,
-        clone_url=clone_url or f"https://github.com/{repo}.git", base=base, agent=agent,
-        state=state, runs_dir=runs_dir.resolve(), now=_now(), lookback_hours=lookback_hours,
-        publish=publish, token=token if not clone_url else None, lessons=_lessons(lessons))
-    if not results:
-        typer.echo("no new failures")
-    for r in results:
-        typer.echo(f"{r['run_id']}  {r['status']:<14} {r['deployment']:<24} {r['reason']}")
+
+AIRFLOW_URL = typer.Option(..., envvar="AIRFLOW_API_URL", help="Airflow server root, e.g. http://127.0.0.1:8080")
+DAGS_DIR = typer.Option("dags", help="Folder in the repo that holds the DAG files")
+AIRFLOW_API = typer.Option(None, help="Force the REST API version (v2 or v1); default: detect")
+
+
+@watch_app.command("airflow")
+def watch_airflow(repo: str = REPO, airflow_url: str = AIRFLOW_URL, dags_dir: str = DAGS_DIR,
+                  api: str | None = AIRFLOW_API, clone_url: str | None = CLONE_URL,
+                  base: str = BASE, state: Path = STATE, runs_dir: Path = REMOTE_RUNS,
+                  lookback_hours: int = LOOKBACK, publish: bool = PUBLISH,
+                  replay: Path | None = REPLAY, agent_endpoint: str = AGENT_ENDPOINT,
+                  lessons: Path = LESSONS):
+    """One pass: find failed Airflow DAG runs, fix them in shadow mode, open pull requests.
+
+    Auth: AIRFLOW_TOKEN, or AIRFLOW_USERNAME and AIRFLOW_PASSWORD. Shadow runs use
+    `airflow dags test` in the repo's own venv, with a throwaway metadata DB.
+    """
+    from datamend.remote import airflow
+
+    _watch(airflow.AirflowSource(airflow_url, api=api, repo_dags_dir=dags_dir), repo, clone_url,
+           base, state, runs_dir, lookback_hours, publish, replay, agent_endpoint, lessons)

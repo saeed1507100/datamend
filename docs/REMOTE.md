@@ -1,4 +1,4 @@
-# datamend for remote platforms: Prefect first
+# datamend for remote platforms: Prefect and Airflow
 
 Goal: a company runs its pipelines on Prefect (or Airflow, Step Functions, dbt).
 datamend runs inside the company's own cloud on a schedule. It finds failed runs,
@@ -21,9 +21,19 @@ It took 2 attempts: the first fix broke the repo's test, validation fed that bac
 and the second attempt passed. A third pass skipped the failure because the open
 PR carries its error signature.
 
-Command: `datamend watch prefect --repo owner/name` (see `--help`). Code:
-`datamend/remote/`. A recorded run for tests and demos:
-`examples/remote/orders_etl_valueerror.json`.
+Airflow works the same way. A real pass against a local Airflow 3.3.2
+(`airflow standalone`) fixed a real failure in the `signups_daily` DAG
+(`ValueError: Invalid isoformat string: '23/10/2026'`) in 49 s and 7 agent turns
+($0.09), with validation 1.00 and confidence 1.00. Production stayed at 36 rows,
+every shadow schema was dropped, and no shadow run reached the real Airflow
+database. The demo repo is local only:
+`~/Documents/Projects/personal/datamend-airflow-demo`.
+
+Commands: `datamend watch prefect --repo owner/name` and
+`datamend watch airflow --repo owner/name --airflow-url URL` (see `--help`). Code:
+`datamend/remote/`. Recorded runs for tests and demos:
+`examples/remote/orders_etl_valueerror.json` (Prefect, reconstructed trajectory) and
+`examples/remote/signups_daily_valueerror.json` (Airflow, live trajectory).
 
 ## Try it locally
 
@@ -41,6 +51,44 @@ datamend agent serve --workspace-root .datamend/remote &
 GITHUB_TOKEN=... datamend watch prefect --repo saeed1507100/datamend-prefect-demo
 # or, without a model or GitHub: --no-publish --replay examples/remote/orders_etl_valueerror.json
 ```
+
+### Airflow
+
+```bash
+# In the demo DAG repo (local: datamend-airflow-demo)
+uv sync
+source airflow.env                        # AIRFLOW_HOME, port 8085, no-login local auth
+airflow standalone &
+A=http://127.0.0.1:8085/api/v2
+curl -X POST $A/variables -H 'Content-Type: application/json' \
+  -d "{\"key\": \"warehouse_path\", \"value\": \"$PWD/warehouse.duckdb\"}"
+curl -X PATCH $A/dags/signups_daily -H 'Content-Type: application/json' -d '{"is_paused": false}'
+curl -X POST $A/dags/signups_daily/dagRuns -H 'Content-Type: application/json' \
+  -d '{"logical_date": null}'             # fails on '23/10/2026'
+
+# In datamend, with `datamend agent serve` running as above
+datamend watch airflow --repo saeed1507100/datamend-airflow-demo \
+  --airflow-url http://127.0.0.1:8085 \
+  --clone-url "file://$HOME/Documents/Projects/personal/datamend-airflow-demo" --no-publish
+# or: --replay examples/remote/signups_daily_valueerror.json
+```
+
+The Airflow source:
+
+- Reads failed runs from `GET /api/v2/dags/~/dagRuns?state=failed`. If the server
+  returns 404 for v2, it uses `/api/v1` (Airflow 2). Force a version with `--api`.
+- Authenticates with `AIRFLOW_TOKEN`, or trades `AIRFLOW_USERNAME` and
+  `AIRFLOW_PASSWORD` for a token at `/auth/token` (basic auth on v1).
+- Takes the error from the failed task instances' logs: structured events on v2,
+  plain text on v1.
+- Maps the DAG's `relative_fileloc` (or the part of `fileloc` after `/dags/`) to a
+  path in the repo. Change the folder with `--dags-dir`.
+- Runs shadow mode with `airflow dags test <dag> -f <file> --conf '{...}'` in the
+  repo's own venv. The conf holds the shadow parameters and a `datamend_shadow`
+  tag, and the source skips runs that carry that tag. Each workspace gets a
+  throwaway `AIRFLOW_HOME` and metadata DB, so a shadow run never writes to the
+  company's Airflow database. Variables the DAG reads, such as the warehouse path,
+  come in as `AIRFLOW_VAR_*` environment variables.
 
 ## Flow of one pass
 
@@ -124,12 +172,13 @@ is the PR's author), the PR stays open and the error is in the run's `review` fi
 
 ## Interfaces
 
-| Interface | Prefect (now) | Airflow | Step Functions / Glue | dbt |
+| Interface | Prefect (now) | Airflow (now) | Step Functions / Glue | dbt |
 | --- | --- | --- | --- | --- |
 | `Source.failures(since)` | `POST /flow_runs/filter` | `GET /dags/~/dagRuns?state=failed` | `ListExecutions(FAILED)` | `run_results.json` |
 | `Source.logs(run)` | `POST /logs/filter` | task instance logs | CloudWatch Logs | `dbt.log` |
-| `Source.code(run)` | deployment `entrypoint` | DAG `fileloc` | Glue `ScriptLocation` / repo map | model path |
-| `Runner.shadow_run` | import the flow, call it with shadow params | `dags test` with conf | invoke locally with shadow args | `dbt build --select m --target shadow` |
+| `Source.code(run)` | deployment `entrypoint` | DAG `relative_fileloc` / `fileloc` | Glue `ScriptLocation` / repo map | model path |
+| `Source.run_shadow` | import the flow, call it with shadow params | `dags test -f <file> --conf` | invoke locally with shadow args | `dbt build --select m --target shadow` |
+| `Source.variable(name)` | `GET /variables/name/{name}` | `GET /variables/{name}` | Parameter Store | `vars` |
 | `CodeHost` | GitHub PR (GitLab later) | same | same | same |
 
 ## Deployment in a company's AWS
@@ -164,4 +213,4 @@ is the PR's author), the PR stays open and the error is in the run's `review` fi
 4. End-to-end: local Prefect server, demo repo `saeed1507100/datamend-prefect-demo`
    with a real bug, a real agent run, a real PR.
 5. Dockerfile, plus Terraform for ECS Fargate and EventBridge Scheduler.
-6. Airflow, then Step Functions, then dbt adapters behind the same interfaces.
+6. Airflow (done), then Step Functions, then dbt adapters behind the same interfaces.

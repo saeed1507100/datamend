@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -123,9 +124,54 @@ class Workspace:
                     "traceback": proc.stderr[-4000:]}
         return json.loads(out.read_text())
 
+    def _airflow_env(self, home: Path, dags_folder: Path, variables: dict) -> dict:
+        """A throwaway Airflow home: shadow runs never touch the real metadata DB."""
+        env = {k: v for k, v in self._env().items()
+               if not k.startswith(("AIRFLOW__DATABASE__", "AIRFLOW_HOME", "AIRFLOW__CORE__"))}
+        env.update({"AIRFLOW_HOME": str(home), "AIRFLOW__CORE__DAGS_FOLDER": str(dags_folder),
+                    "AIRFLOW__CORE__LOAD_EXAMPLES": "False",
+                    **{f"AIRFLOW_VAR_{k.upper()}": str(v) for k, v in variables.items()}})
+        return env
+
+    def run_dag(self, dag_file: str, dag_id: str, conf: dict, variables: dict,
+                timeout: int = 900) -> dict:
+        """`airflow dags test` with the shadow conf, in the workspace's own venv.
+
+        Variables the DAG needs come in as AIRFLOW_VAR_* env vars, so the run doesn't need
+        the company's metadata DB.
+        """
+        home = self.path.parent / f"{self.path.name}-airflow"
+        dag_path = self.path / dag_file
+        env = self._airflow_env(home, dag_path.parent, variables)
+        uv = ["uv", "run", "--quiet", "--project", str(self.path), "airflow"]
+        if not (home / ".migrated").exists():
+            home.mkdir(parents=True, exist_ok=True)
+            proc = subprocess.run([*uv, "db", "migrate"], cwd=self.path, capture_output=True,
+                                  text=True, timeout=timeout, env=env, check=False)
+            if proc.returncode != 0:
+                return {"ok": False, "error": "airflow db migrate failed",
+                        "traceback": (proc.stdout + proc.stderr)[-4000:]}
+            (home / ".migrated").touch()
+        proc = subprocess.run([*uv, "dags", "test", dag_id, "-f", str(dag_path), "-c",
+                               json.dumps(conf)], cwd=self.path, capture_output=True, text=True,
+                              timeout=timeout, env=env, check=False)
+        return dag_test_result(proc.returncode, proc.stdout + proc.stderr)
+
     def run_tests(self, command: str, timeout: int = 600) -> dict:
         proc = subprocess.run(["uv", "run", "--quiet", "--project", str(self.path), *command.split()],
                               cwd=self.path, capture_output=True, text=True, timeout=timeout,
                               env=self._env(), check=False)
         tail = (proc.stdout + proc.stderr).strip().splitlines()[-15:]
         return {"ok": proc.returncode == 0, "command": command, "output": "\n".join(tail)}
+
+
+def dag_test_result(returncode: int, output: str) -> dict:
+    """Did `airflow dags test` succeed? Its exit code alone isn't reliable across versions."""
+    state = re.findall(r"state[=:]\s*['\"]?(success|failed)", output, re.IGNORECASE)
+    failed = returncode != 0 or (state and state[-1].lower() == "failed")
+    if not failed:
+        return {"ok": True, "result": "dag run succeeded"}
+    errors = [m.group(0).strip() for line in output.splitlines()
+              for m in [re.search(r"\b[A-Za-z_][\w.]*(Error|Exception)\b:.*", line)] if m]
+    return {"ok": False, "error": (errors[-1] if errors else f"dag run failed (exit {returncode})")[:1000],
+            "traceback": output[-4000:]}

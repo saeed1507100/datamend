@@ -30,16 +30,20 @@ def from_stream(events: list[dict], workspace: str | None = None) -> list[dict]:
     steps, by_id = [], {}
 
     def rel(path: str) -> str:
-        return path.removeprefix(workspace.rstrip("/") + "/") if workspace and path else path
+        if not workspace or not path:
+            return path
+        root = workspace.rstrip("/")
+        return "." if path == root else path.removeprefix(root + "/")
 
     for ev in events:
         content = (ev.get("message") or {}).get("content") or []
         if ev.get("type") == "assistant":
             for block in content:
                 if block.get("type") == "tool_use":
-                    args = block.get("input") or {}
+                    args = {k: rel(v) if k in ("file_path", "path") and isinstance(v, str) else v
+                            for k, v in (block.get("input") or {}).items()}
                     step = {"kind": "tool_call", "tool": block.get("name"),
-                            "target": rel(_summary(block.get("name", ""), args)),
+                            "target": _summary(block.get("name", ""), args),
                             "source": "live"}
                     if block.get("name") == "Edit":
                         step["edit"] = {"old": str(args.get("old_string", ""))[:600],

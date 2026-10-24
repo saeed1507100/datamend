@@ -1,4 +1,4 @@
-"""One watch pass over a Prefect workspace: failed runs in, pull requests out.
+"""One watch pass over an orchestrator (Prefect or Airflow): failed runs in, pull requests out.
 
 For each new failure: clone the repo, install its dependencies, reproduce the failure in
 shadow mode, let the agent patch allowed files, validate the patch in shadow mode (twice,
@@ -22,7 +22,7 @@ from datamend.ai import trajectory
 from datamend.remote import compare
 from datamend.remote.config import Deployment, RepoConfig
 from datamend.remote.config import load as load_config
-from datamend.remote.prefect import FailedRun, PrefectSource
+from datamend.remote.prefect import FailedRun
 from datamend.remote.workspace import Workspace
 
 SCHEMA = """
@@ -148,8 +148,11 @@ class Shadow:
     """Runs the flow in shadow mode and inspects what it wrote."""
 
     def __init__(self, ws: Workspace, run: FailedRun, dep: Deployment, cfg: RepoConfig,
-                 warehouse: str):
+                 warehouse: str, source):
         self.ws, self.run, self.dep, self.cfg, self.warehouse = ws, run, dep, cfg, warehouse
+        self.source = source  # runs the flow or DAG: PrefectSource or AirflowSource
+        name = cfg.warehouse.path_variable
+        self.variables = {name: warehouse} if name else {}
 
     def params(self, tag: str) -> tuple[dict, str]:
         schema = self.dep.shadow.schema_name.format(run=tag)
@@ -159,7 +162,8 @@ class Shadow:
 
     def execute(self, tag: str) -> tuple[dict, str]:
         params, schema = self.params(tag)
-        return self.ws.run_flow(self.run.entrypoint, params, f"datamend-run:{tag}"), schema
+        return self.source.run_shadow(self.ws, self.run.entrypoint, params, tag,
+                                      self.variables), schema
 
     def digest(self, schema: str) -> dict:
         with duckdb.connect(self.warehouse, read_only=True) as con:
@@ -295,7 +299,7 @@ def pr_body(run: FailedRun, row: dict, logs: str) -> str:
     return "\n".join(lines)
 
 
-def investigate(run: FailedRun, *, source: PrefectSource, github, clone_url: str, base: str,
+def investigate(run: FailedRun, *, source, github, clone_url: str, base: str,
                 agent, con, runs_dir: Path, now: datetime, publish: bool = True,
                 token: str | None = None, lessons: list[dict] | None = None) -> dict:
     run_id = f"rm_{now:%Y%m%d%H%M%S}_{uuid.uuid4().hex[:6]}"
@@ -325,7 +329,7 @@ def investigate(run: FailedRun, *, source: PrefectSource, github, clone_url: str
     ws.install()
     baseline = {f: (ws.path / f).read_bytes() for f in ws.changed_files() if (ws.path / f).is_file()}
     warehouse = cfg.warehouse.path or source.variable(cfg.warehouse.path_variable)
-    shadow = Shadow(ws, run, dep, cfg, warehouse)
+    shadow = Shadow(ws, run, dep, cfg, warehouse, source)
 
     tag = uuid.uuid4().hex[:8]
     repro, schema = shadow.execute(f"{tag}r")
@@ -420,7 +424,7 @@ def investigate(run: FailedRun, *, source: PrefectSource, github, clone_url: str
                   f"{row['confidence']:.2f}; {row['pr_url']} (review: {asked})")
 
 
-def watch(*, source: PrefectSource, github, clone_url: str, base: str, agent, state: Path,
+def watch(*, source, github, clone_url: str, base: str, agent, state: Path,
           runs_dir: Path, now: datetime, lookback_hours: int = 24, max_investigations: int = 3,
           publish: bool = True, token: str | None = None,
           lessons: list[dict] | None = None) -> list[dict]:

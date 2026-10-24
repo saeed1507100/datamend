@@ -21,6 +21,8 @@ STREAM = [
          "input": {"file_path": "/ws/flows/o.py", "old_string": "float(x)", "new_string": "parse(x)"}}]}},
     {"type": "user", "message": {"content": [
         {"type": "tool_result", "tool_use_id": "t2", "content": "old_string not found", "is_error": True}]}},
+    {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": "t3", "name": "Grep", "input": {"pattern": "amount", "path": "/ws"}}]}},
     {"type": "assistant", "message": {"content": [{"type": "text", "text": "{\"fix\": \"f\"}"}]}},
     {"type": "result", "subtype": "success", "result": "{\"fix\": \"f\"}", "num_turns": 3,
      "total_cost_usd": 0.02, "usage": {"input_tokens": 1, "output_tokens": 2}},
@@ -34,7 +36,8 @@ def test_stream_json_becomes_steps(tmp_path):
     assert [(s["n"], s["kind"], s.get("tool"), s.get("target"), s.get("ok")) for s in steps] == [
         (1, "tool_call", "Read", "flows/o.py", True),
         (2, "tool_call", "Edit", "flows/o.py", False),
-        (3, "message", None, None, None)]
+        (3, "tool_call", "Grep", "amount .", None),
+        (4, "message", None, None, None)]
     assert steps[0]["result"] == "3 lines" and steps[1]["edit"]["new"] == "parse(x)"
     assert "--verbose" in server.claude_command("p", None, "sonnet", 1, 1.0)
 
@@ -43,7 +46,7 @@ def test_stream_json_becomes_steps(tmp_path):
     status, body = server.handle({"messages": [{"role": "user", "content": "hi"}],
                                   "metadata": {"workspace": str(ws)}},
                                  tmp_path / "root", lambda cmd, cwd, t: out)
-    assert status == 200 and len(body["datamend"]["trajectory"]) == 3
+    assert status == 200 and len(body["datamend"]["trajectory"]) == 4
 
 
 def test_replay_carries_recorded_or_reconstructed_steps(tmp_path):
@@ -155,3 +158,10 @@ def test_cli_feedback_on_a_step_and_chat_style(env, tmp_path):  # noqa: F811
     lesson_id = listed.split()[0]
     assert cli.invoke(app, ["ai", "lessons", "forget", lesson_id, "--lessons", str(store)]).exit_code == 0
     assert cli.invoke(app, ["ai", "lessons", "list", "--lessons", str(store)]).output.count("ls_") == 1
+
+
+def test_airflow_recording_has_a_live_trajectory():
+    rec = json.loads((RECORDING.parent.parent / "remote" / "signups_daily_valueerror.json").read_text())
+    assert rec["trajectory_source"] == "live"
+    assert {s["source"] for s in rec["trajectory"]} == {"live"}
+    assert any(s.get("tool") == "Edit" and s["target"] == "dags/signups.py" for s in rec["trajectory"])

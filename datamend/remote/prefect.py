@@ -69,3 +69,7 @@ class PrefectSource:
 
     def variable(self, name: str) -> str:
         return self._get(f"/variables/name/{name}")["value"]
+
+    def run_shadow(self, ws, entrypoint: str, params: dict, tag: str, variables: dict) -> dict:
+        """Import the flow in the workspace's venv and call it with shadow parameters."""
+        return ws.run_flow(entrypoint, params, f"datamend-run:{tag}")
