@@ -29,3 +29,12 @@ def inject_stale(con, catalog: Catalog, name: str, now: datetime, affected: list
 
 def inject_gap(con, name: str, keep_rows: int = 10) -> None:
     con.execute(f'DELETE FROM "{name}" WHERE id >= ?', [keep_rows])
+
+
+def fill_missing(con, name: str, at: datetime, rows: int = SEED_ROWS) -> int:
+    """Insert the ids a gap removed. Re-running it inserts nothing, so it is idempotent."""
+    before = con.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]
+    con.execute(
+        f'INSERT INTO "{name}" SELECT range, ? FROM range(?) '
+        f'WHERE range NOT IN (SELECT id FROM "{name}")', [at, rows])
+    return con.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0] - before

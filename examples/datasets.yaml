@@ -1,4 +1,4 @@
-# Synthetic warehouse: raw -> staging -> mart.
+# Synthetic warehouse: raw -> staging -> mart. 10 datasets, 3 layers.
 policy:
   max_blast_radius: 5
   cooldown_minutes: 30
@@ -6,9 +6,11 @@ policy:
 datasets:
   - {name: raw_orders,    cadence_minutes: 60,  job: load_raw_orders,    checks: {min_rows: 100}}
   - {name: raw_customers, cadence_minutes: 360, job: load_raw_customers, checks: {min_rows: 50}}
+  - {name: raw_products,  cadence_minutes: 1440, job: load_raw_products}
   - {name: raw_payments,  cadence_minutes: 60,  job: load_raw_payments,  idempotent: false}
   - {name: orders,        cadence_minutes: 60,  job: build_orders,    upstreams: [raw_orders]}
-  - {name: customers,     cadence_minutes: 360, job: build_customers, upstreams: [raw_customers], critical: manual}
+  - {name: customers,     cadence_minutes: 360, job: build_customers, upstreams: [raw_customers]}
+  - {name: products,      cadence_minutes: 1440, job: build_products,  upstreams: [raw_products], critical: manual}
   - {name: payments,      cadence_minutes: 60,  job: build_payments,  upstreams: [raw_payments]}
   - {name: revenue_daily, cadence_minutes: 60,  job: build_revenue,   upstreams: [orders, payments]}
   - {name: customer_ltv,  cadence_minutes: 360, job: build_ltv,       upstreams: [orders, customers]}

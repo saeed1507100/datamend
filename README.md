@@ -1,5 +1,7 @@
 # datamend
 
+[![ci](https://github.com/saeed1507100/datamend/actions/workflows/ci.yml/badge.svg)](https://github.com/saeed1507100/datamend/actions/workflows/ci.yml)
+
 **Auto-fix the safe data incidents, escalate the rest — with an audit trail.**
 
 `datamend` watches dataset freshness and quality, walks the lineage graph to
@@ -7,7 +9,7 @@ find the blast radius of a failure, and repairs the incidents that are known
 to be safe to repair. Everything else goes to a human. Every decision lands in
 an audit log.
 
-> Status: early build (Oct 2026). The demo slice below is the target for v0.1.
+> Status: v0.1 (Oct 2026). Runs end to end on synthetic data.
 
 ## Why
 
@@ -64,11 +66,27 @@ Or step by step:
 ```bash
 uv sync
 uv run datamend seed                  # synthetic warehouse + catalog
-uv run datamend inject stale orders   # break something
-uv run datamend run                   # check → decide → fix/escalate
-uv run datamend audit                 # what happened and why
-uv run datamend lineage orders        # blast radius
+uv run datamend inject stale raw_orders     # break something
+uv run datamend inject gap raw_customers    # drop rows
+uv run datamend run                         # check → decide → fix/escalate
+uv run datamend audit                       # what happened and why
+uv run datamend lineage raw_orders          # blast radius
+uv run datamend lineage --mermaid           # whole graph, colored by state
+uv run datamend serve                       # read-only page at 127.0.0.1:8000
 ```
+
+`make demo` breaks three datasets. Two are auto-fixed: `raw_orders` (rerun)
+and `raw_customers` (backfill). `raw_payments` escalates because its job isn't
+idempotent. Its downstream datasets are logged as `blocked`, not fixed.
+
+To add lineage from OpenLineage run events, pass a JSON-lines file:
+
+```bash
+uv run datamend lineage raw_payments --events examples/openlineage.jsonl
+```
+
+Only `COMPLETE` events count. Edges to datasets missing from the catalog are
+skipped with a warning.
 
 ## The guardrail model
 
@@ -97,6 +115,9 @@ the reason. Sample audit entry:
   wrong.
 - **Fix the root, not the symptom.** When several datasets are stale, the
   graph finds the furthest-upstream failure and fixes only that one.
+- **Never paper over an escalation.** A dataset that depends on an escalated
+  root isn't rerun, even if another of its roots was fixed. It's logged as
+  `blocked`, with the root it waits on.
 - **Allowlist, not denylist.** The agent can only do what is registered as
   safe. Unknown means escalate.
 - **Audit everything.** An auto-fix nobody can explain is worse than an alert.

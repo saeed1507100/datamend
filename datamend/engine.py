@@ -26,8 +26,7 @@ def run_cycle(con, catalog: Catalog, g: nx.DiGraph, now: datetime) -> list[polic
         )
         for inc in to_decide
     ]
-    escalated = {d.incident.dataset for d in decisions
-                 if d.incident.kind == "stale" and d.verdict == "needs_approval"}
+    escalated = {d.incident.dataset for d in decisions if d.verdict == "needs_approval"}
     blocked = set().union(*(nx.descendants(g, r) for r in escalated))
 
     for d in decisions:

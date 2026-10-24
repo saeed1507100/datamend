@@ -4,7 +4,7 @@ from datetime import datetime
 
 from datamend import simulate
 
-FIXES = {"stale": "rerun"}
+FIXES = {"stale": "rerun", "gap": "backfill"}
 
 
 def rerun(con, name: str, affected: list[str], now: datetime) -> str:
@@ -14,4 +14,12 @@ def rerun(con, name: str, affected: list[str], now: datetime) -> str:
     return "fresh"
 
 
-ACTIONS = {"rerun": rerun}
+def backfill(con, name: str, affected: list[str], now: datetime) -> str:
+    """Load only the missing rows, then rebuild downstream from the repaired table."""
+    filled = simulate.fill_missing(con, name, now)
+    for n in affected:
+        simulate.load_rows(con, n, now)
+    return f"backfilled {filled} rows"
+
+
+ACTIONS = {"rerun": rerun, "backfill": backfill}

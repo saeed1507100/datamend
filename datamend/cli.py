@@ -10,12 +10,24 @@ import typer
 
 from datamend import audit as audit_log
 from datamend import catalog as cat
-from datamend import engine, lineage, simulate
+from datamend import engine, lineage, openlineage, simulate, web
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
 DB = typer.Option(Path("datamend.duckdb"), envvar="DATAMEND_DB", help="DuckDB file")
 CATALOG = typer.Option(Path("examples/datasets.yaml"), envvar="DATAMEND_CATALOG")
+EVENTS = typer.Option(None, envvar="DATAMEND_OPENLINEAGE",
+                      help="OpenLineage events (JSON lines) to merge into the catalog's lineage")
+
+
+def _load(catalog: Path, events: Path | None) -> cat.Catalog:
+    c = cat.load(catalog)
+    if events is None:
+        return c
+    c, skipped = openlineage.merge(c, events)
+    for up, down in skipped:
+        typer.echo(f"openlineage: skipped {up} -> {down} (not in catalog)", err=True)
+    return c
 
 
 class Failure(StrEnum):
@@ -37,9 +49,10 @@ def seed(db: Path = DB, catalog: Path = CATALOG):
 
 
 @app.command()
-def inject(kind: Failure, dataset: str, db: Path = DB, catalog: Path = CATALOG):
+def inject(kind: Failure, dataset: str, db: Path = DB, catalog: Path = CATALOG,
+           events: Path | None = EVENTS):
     """Break a dataset on purpose."""
-    c = cat.load(catalog)
+    c = _load(catalog, events)
     with duckdb.connect(str(db)) as con:
         if kind is Failure.stale:
             affected = lineage.downstream(lineage.build(c), dataset)
@@ -50,9 +63,9 @@ def inject(kind: Failure, dataset: str, db: Path = DB, catalog: Path = CATALOG):
 
 
 @app.command()
-def run(db: Path = DB, catalog: Path = CATALOG):
+def run(db: Path = DB, catalog: Path = CATALOG, events: Path | None = EVENTS):
     """Run one check -> decide -> fix/escalate cycle."""
-    c = cat.load(catalog)
+    c = _load(catalog, events)
     with duckdb.connect(str(db)) as con:
         decisions = engine.run_cycle(con, c, lineage.build(c), _now())
     if not decisions:
@@ -77,7 +90,31 @@ def audit(db: Path = DB):
 
 
 @app.command("lineage")
-def lineage_cmd(dataset: str, catalog: Path = CATALOG):
-    """Show the blast radius of a dataset."""
-    affected = lineage.downstream(lineage.build(cat.load(catalog)), dataset)
+def lineage_cmd(
+    dataset: str | None = typer.Argument(None),
+    mermaid: bool = typer.Option(False, help="Print the whole graph as Mermaid"),
+    db: Path = DB,
+    catalog: Path = CATALOG,
+    events: Path | None = EVENTS,
+):
+    """Show a dataset's blast radius, or the whole graph with --mermaid."""
+    g = lineage.build(_load(catalog, events))
+    if mermaid:
+        states = {}
+        if db.exists():
+            with duckdb.connect(str(db)) as con:
+                audit_log.init(con)
+                states = audit_log.latest_states(con)
+        typer.echo(lineage.mermaid(g, states))
+        return
+    if dataset is None:
+        raise typer.BadParameter("pass a dataset, or --mermaid")
+    affected = lineage.downstream(g, dataset)
     typer.echo(f"{dataset} -> {len(affected)} downstream: {', '.join(affected) or 'none'}")
+
+
+@app.command()
+def serve(port: int = 8000, db: Path = DB, catalog: Path = CATALOG, events: Path | None = EVENTS):
+    """Serve a read-only page: lineage graph and audit log."""
+    typer.echo(f"serving http://127.0.0.1:{port}")
+    web.serve(_load(catalog, events), db, port)

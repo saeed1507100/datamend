@@ -59,6 +59,12 @@ AuditEntry(incident, decision, action, result, at)
 Cut order if time runs short: drop `gap/backfill`, then the `null_rate`
 check, then the cooldown rule. Never cut the audit log or the escalation path.
 
+## Status (2026-10-24)
+
+Sessions 1 and 2 are done, except recording the GIF: `docs/demo.tape` is
+ready, run `vhs docs/demo.tape`. In Session 3, OpenLineage input and the web
+view are done. The AWS deploy, demo video, and post are still open.
+
 ## Session 2 (next Sat) — make it convincing
 
 - Backfill action + gap incident.

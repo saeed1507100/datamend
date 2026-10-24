@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import duckdb
 import pytest
 
-from datamend import audit, catalog, checks, engine, lineage, simulate
+from datamend import audit, catalog, checks, engine, lineage, openlineage, simulate, web
 from datamend.checks import Incident
 from datamend.policy import decide
 
@@ -47,7 +47,7 @@ def test_non_idempotent_escalates():
 
 
 def test_manual_in_blast_radius_escalates():
-    assert failed_rules("raw_customers") == ["not_manual"]
+    assert failed_rules("raw_products") == ["not_manual"]
 
 
 def test_cooldown_escalates():
@@ -55,8 +55,20 @@ def test_cooldown_escalates():
 
 
 def test_unregistered_fix_escalates():
-    gap = Incident(dataset="raw_orders", kind="gap", detail="", detected_at=NOW)
-    assert failed_rules("raw_orders", inc=gap) == ["registered_fix"]
+    dq = Incident(dataset="raw_orders", kind="dq", detail="", detected_at=NOW)
+    assert failed_rules("raw_orders", inc=dq) == ["registered_fix"]
+
+
+def test_gap_is_backfilled_once():
+    con = duckdb.connect()
+    simulate.seed(con, CAT, NOW)
+    simulate.inject_gap(con, "raw_customers")
+
+    [d] = engine.run_cycle(con, CAT, G, NOW)
+    assert (d.incident.id, d.action) == ("raw_customers:gap", "backfill:load_raw_customers")
+    assert con.execute("SELECT count(*), count(DISTINCT id) FROM raw_customers").fetchone() == (200, 200)
+    assert simulate.fill_missing(con, "raw_customers", NOW) == 0
+    assert engine.run_cycle(con, CAT, G, NOW) == []
 
 
 def test_blast_radius_limit():
@@ -95,3 +107,35 @@ def test_dataset_with_escalated_root_is_blocked_not_rerun():
     stale_now = {i.dataset for i in checks.run_all(con, CAT, NOW)}
     assert "revenue_daily" in stale_now
     assert "orders" not in stale_now
+
+
+def test_mermaid_colors_nodes_by_decision():
+    out = lineage.mermaid(G, {"raw_orders": "auto_fix", "revenue_daily": "blocked"})
+    assert "    raw_orders --> orders" in out
+    assert "    class raw_orders auto_fix" in out
+    assert "    class revenue_daily blocked" in out
+
+
+def test_openlineage_merges_complete_events_only():
+    merged, skipped = openlineage.merge(CAT, "examples/openlineage.jsonl")
+    assert merged.get("customer_ltv").upstreams == ["customers", "orders", "payments"]
+    assert skipped == [("customers", "campaign_audience")]
+    # The START event's revenue_daily input is ignored.
+    assert "revenue_daily" not in merged.get("customer_ltv").upstreams
+    assert "customer_ltv" in lineage.downstream(lineage.build(merged), "raw_payments")
+
+
+def test_web_page_renders_audit_and_graph(tmp_path):
+    db = tmp_path / "w.duckdb"
+    with duckdb.connect(str(db)) as con:
+        simulate.seed(con, CAT, NOW)
+        simulate.inject_stale(con, CAT, "raw_payments", NOW, lineage.downstream(G, "raw_payments"))
+        engine.run_cycle(con, CAT, G, NOW)
+    page = web.render(CAT, db)
+    assert "class raw_payments needs_approval" in page
+    assert "waiting on raw_payments" in page
+    assert "1 need approval" in page
+
+
+def test_web_page_renders_without_db(tmp_path):
+    assert "No cycles run yet." in web.render(CAT, tmp_path / "missing.duckdb")
