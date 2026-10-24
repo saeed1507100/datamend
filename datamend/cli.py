@@ -129,6 +129,19 @@ REPLAY = typer.Option(None, help="Replay a recorded agent run instead of calling
 BY = typer.Option(..., help="Who decides; recorded in the audit trail")
 REASON = typer.Option(..., help="Why; recorded in the audit trail")
 BARE = typer.Option(False, help="claude --bare (needs ANTHROPIC_API_KEY)")
+LESSONS = typer.Option(Path(".datamend/lessons.duckdb"), envvar="DATAMEND_LESSONS",
+                       help="Lessons store; lessons.md is exported next to it")
+lessons_app = typer.Typer(no_args_is_help=True, help="Lessons learned from reviewer feedback.")
+ai_app.add_typer(lessons_app, name="lessons")
+
+
+def _lessons(path: Path) -> list[dict]:
+    from datamend.ai import lessons
+
+    if not path.exists():
+        return []
+    with duckdb.connect(str(path)) as con:
+        return lessons.all_lessons(con)
 
 
 def _print_run(r: dict) -> None:
@@ -154,7 +167,7 @@ def _print_run(r: dict) -> None:
 def investigate(
     incident: str,
     replay: Path | None = REPLAY,
-    db: Path = DB, catalog: Path = CATALOG, runs: Path = RUNS,
+    db: Path = DB, catalog: Path = CATALOG, runs: Path = RUNS, lessons: Path = LESSONS,
 ):
     """Ask the agent to find and fix why INCIDENT (e.g. raw_payments:stale) was escalated."""
     from datamend.ai import client, fixer
@@ -162,7 +175,8 @@ def investigate(
     c = cat.load(catalog)
     agent = client.ReplayAgent(replay) if replay else client.HttpAgent(c.ai.endpoint)
     with duckdb.connect(str(db)) as con:
-        _print_run(fixer.investigate(con, c, incident, agent, _now(), runs))
+        _print_run(fixer.investigate(con, c, incident, agent, _now(), runs,
+                                     lessons=_lessons(lessons)))
 
 
 @ai_app.command()
@@ -186,7 +200,7 @@ def reject(run_id: str, by: str = BY, reason: str = REASON,
 
 
 @ai_app.command()
-def show(run_id: str, db: Path = DB):
+def show(run_id: str, db: Path = DB, steps: bool = typer.Option(False, help="Print the trajectory")):
     """Everything about one AI run: explanation, guardrails, validation, diff, result."""
     from datamend.ai import fixer
 
@@ -195,6 +209,111 @@ def show(run_id: str, db: Path = DB):
     if r is None:
         raise typer.BadParameter(f"no run {run_id}")
     _print_run(r)
+    if steps:
+        _print_steps(json.loads(r.get("trajectory") or "[]"))
+
+
+def _print_steps(steps: list[dict]) -> None:
+    from datamend.ai import trajectory
+
+    for s in steps:
+        mark = {True: "ok ", False: "ERR"}.get(s.get("ok"), "   ")
+        attempt = f"a{s['attempt']} " if s.get("attempt") else ""
+        typer.echo(f"  {s['n']:>3} {mark} {attempt}{trajectory.describe(s)}  [{s['source']}]")
+
+
+def _find_run(run_id: str, db: Path, state: Path) -> tuple[str, list[dict]]:
+    """(scope for a lesson from this run, its trajectory), from the AI or the watch DB."""
+    from datamend.ai import fixer, lessons
+    from datamend.remote import watch as remote_watch
+
+    if db.exists():
+        with duckdb.connect(str(db)) as con:
+            r = fixer.get(con, run_id)
+        if r is not None:
+            return lessons.scope_for("dataset", r["dataset"]), json.loads(r.get("trajectory") or "[]")
+    if state.exists():
+        with duckdb.connect(str(state)) as con:
+            remote_watch.init(con)
+            found = con.execute("SELECT deployment, trajectory FROM remote_runs WHERE run_id = ?",
+                                [run_id]).fetchone()
+        if found:
+            return lessons.scope_for("deployment", found[0]), json.loads(found[1] or "[]")
+    raise typer.BadParameter(f"no run {run_id} in {db} or {state}")
+
+
+class Scope(StrEnum):
+    run = "run"
+    global_ = "global"
+
+
+SCOPE = typer.Option(Scope.run, help="run: the run's dataset or deployment; or global")
+WATCH_STATE = typer.Option(Path(".datamend/remote.duckdb"), envvar="DATAMEND_STATE")
+EXPORT_OUT = typer.Option(None, help="Output file")
+
+
+@ai_app.command()
+def feedback(
+    run_id: str,
+    text: str,
+    step: int | None = typer.Option(None, help="Comment on this step of the run's trajectory"),
+    scope: Scope = SCOPE,
+    by: str = typer.Option("reviewer", help="Who gives the feedback"),
+    db: Path = DB, state: Path = WATCH_STATE,
+    lessons: Path = LESSONS,
+):
+    """Give feedback on a run, or one step of it. It becomes a lesson for later prompts."""
+    from datamend.ai import lessons as lessons_mod
+
+    run_scope, steps = _find_run(run_id, db, state)
+    chosen = None
+    if step is not None:
+        chosen = next((s for s in steps if s["n"] == step), None)
+        if chosen is None:
+            raise typer.BadParameter(f"{run_id} has {len(steps)} steps; no step {step}")
+    lessons.parent.mkdir(parents=True, exist_ok=True)
+    with duckdb.connect(str(lessons)) as con:
+        row = lessons_mod.add(con, run_id=run_id, feedback=text, step=chosen, author=by, now=_now(),
+                              scope="global" if scope is Scope.global_ else run_scope)
+        md = lessons_mod.export(con, lessons.with_name("lessons.md"))
+    typer.echo(f"{row['lesson_id']}  {row['scope']}  {row['text']}")
+    typer.echo(f"later prompts for {row['scope']} include this lesson; exported to {md}")
+
+
+@lessons_app.command("list")
+def lessons_list(lessons: Path = LESSONS, all_: bool = typer.Option(False, "--all",
+                 help="Include forgotten lessons")):
+    """Lessons that later prompts include, oldest first."""
+    from datamend.ai import lessons as lessons_mod
+
+    if not lessons.exists():
+        typer.echo("no lessons yet")
+        return
+    with duckdb.connect(str(lessons)) as con:
+        for ls in lessons_mod.all_lessons(con, include_inactive=all_):
+            off = "" if ls["active"] else " (forgotten)"
+            typer.echo(f"{ls['lesson_id']}  {ls['scope']:<28} {ls['text']}{off}")
+
+
+@lessons_app.command("forget")
+def lessons_forget(lesson_id: str, lessons: Path = LESSONS):
+    """Stop including a lesson in prompts. It stays in the store, marked inactive."""
+    from datamend.ai import lessons as lessons_mod
+
+    with duckdb.connect(str(lessons)) as con:
+        if not lessons_mod.forget(con, lesson_id):
+            raise typer.BadParameter(f"no active lesson {lesson_id}")
+        lessons_mod.export(con, lessons.with_name("lessons.md"))
+    typer.echo(f"forgot {lesson_id}")
+
+
+@lessons_app.command("export")
+def lessons_export(lessons: Path = LESSONS, out: Path | None = EXPORT_OUT):
+    """Write active lessons as Markdown (default: lessons.md next to the store)."""
+    from datamend.ai import lessons as lessons_mod
+
+    with duckdb.connect(str(lessons)) as con:
+        typer.echo(f"wrote {lessons_mod.export(con, out or lessons.with_name('lessons.md'))}")
 
 
 @ai_app.command("list")
@@ -252,7 +371,7 @@ AGENT_ENDPOINT = typer.Option("http://127.0.0.1:8787", envvar="DATAMEND_AGENT_EN
 def watch_prefect(repo: str = REPO, clone_url: str | None = CLONE_URL, base: str = BASE,
                   state: Path = STATE, runs_dir: Path = REMOTE_RUNS, lookback_hours: int = LOOKBACK,
                   publish: bool = PUBLISH, replay: Path | None = REPLAY,
-                  agent_endpoint: str = AGENT_ENDPOINT):
+                  agent_endpoint: str = AGENT_ENDPOINT, lessons: Path = LESSONS):
     """One pass: find failed Prefect runs, fix them in shadow mode, open pull requests.
 
     Needs PREFECT_API_URL (and PREFECT_API_KEY for Prefect Cloud), GITHUB_TOKEN,
@@ -271,7 +390,7 @@ def watch_prefect(repo: str = REPO, clone_url: str | None = CLONE_URL, base: str
         source=prefect.PrefectSource(), github=github.GitHub(repo, token) if publish else None,
         clone_url=clone_url or f"https://github.com/{repo}.git", base=base, agent=agent,
         state=state, runs_dir=runs_dir.resolve(), now=_now(), lookback_hours=lookback_hours,
-        publish=publish, token=token if not clone_url else None)
+        publish=publish, token=token if not clone_url else None, lessons=_lessons(lessons))
     if not results:
         typer.echo("no new failures")
     for r in results:

@@ -16,7 +16,7 @@ import duckdb
 import networkx as nx
 
 from datamend import adapters, audit, catalog, checks, engine, lineage, simulate
-from datamend.ai import client, fixer
+from datamend.ai import client, fixer, lessons
 
 
 def _graph(cat: catalog.Catalog, g: nx.DiGraph) -> dict:
@@ -38,6 +38,32 @@ def _stats(platform, cat, now) -> dict:
         out[d.name] = {"rows": rows,
                        "age_minutes": None if last is None else int((now - last).total_seconds() // 60)}
     return out
+
+
+EXAMPLE_FEEDBACK = ("Good fix. Next time, also say in the risk which downstream tables "
+                    "a rerun rebuilds, so the reviewer can check them.")
+
+
+def _feedback_example(cat: catalog.Catalog, g: nx.DiGraph, run: dict, now: datetime) -> dict:
+    """A reviewer comment on the run's edit step, the lesson it became, and the next prompt."""
+    steps = json.loads(run["trajectory"])
+    edit = next(s for s in steps if s.get("tool") == "Edit")
+    with duckdb.connect() as con:
+        lesson = lessons.add(con, run_id=run["run_id"], feedback=EXAMPLE_FEEDBACK, step=edit,
+                             scope=lessons.scope_for("dataset", run["dataset"]), now=now,
+                             author="data-eng on-call")
+        rows = lessons.all_lessons(con)
+    prompt = fixer.build_prompt(cat, g, run["dataset"], "idempotent: job is not idempotent",
+                                run["job_file"], lessons.select(rows, f"dataset:{run['dataset']}"))
+    start = prompt.index("## Lessons from past reviews")
+    return {
+        "feedback": {"run_id": run["run_id"], "step": edit["n"], "author": lesson["author"],
+                     "text": EXAMPLE_FEEDBACK},
+        "lesson": {k: lesson[k] for k in ("lesson_id", "scope", "text", "step", "step_summary")},
+        "next_prompt_excerpt": prompt[start:prompt.index("## Task", start)].strip(),
+        "cli": [f'datamend ai feedback {run["run_id"]} --step {edit["n"]} "{EXAMPLE_FEEDBACK}"',
+                "datamend ai lessons list"],
+    }
 
 
 def export(recording: Path, examples: Path, now: datetime | None = None) -> dict:
@@ -111,7 +137,11 @@ def export(recording: Path, examples: Path, now: datetime | None = None) -> dict
                  "guardrails": json.loads(run["guardrails"]),
                  "validation": json.loads(run["validation"]), "score": run["score"],
                  "diff": run["diff"], "model": rec["model"],
-                 "recorded_at": rec["recorded_at"], "usage": rec["response"]["datamend"]})
+                 "recorded_at": rec["recorded_at"],
+                 "usage": {k: v for k, v in rec["response"]["datamend"].items() if k != "trajectory"},
+                 "trajectory": json.loads(run["trajectory"]),
+                 "trajectory_source": rec.get("trajectory_source", "live")})
+        feedback = _feedback_example(cat, g, run, now)
 
         done = fixer.approve(con, cat, run["run_id"], "data-eng on-call", now, tmp / "runs")
         final = {**healthy, **{d: "ai_fix" for d in ["raw_payments"]},
@@ -126,6 +156,7 @@ def export(recording: Path, examples: Path, now: datetime | None = None) -> dict
         entries = [{**e, "at": e["at"].isoformat() + "Z"} for e in audit.entries(con)]
         return {"generated_by": "datamend export-scenario", "now": now.isoformat() + "Z",
                 "graph": _graph(cat, g), "steps": steps, "audit": entries,
-                "policy": cat.policy.model_dump(), "ai_config": cat.ai.model_dump()}
+                "policy": cat.policy.model_dump(), "ai_config": cat.ai.model_dump(),
+                "feedback_example": feedback}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

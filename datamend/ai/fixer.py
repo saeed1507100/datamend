@@ -22,7 +22,8 @@ import networkx as nx
 from datamend import adapters, audit, checks, lineage
 from datamend.adapters.local import load_job
 from datamend.adapters.sql import DbApiWarehouse
-from datamend.ai import guardrails
+from datamend.ai import guardrails, trajectory
+from datamend.ai import lessons as lessons_mod
 from datamend.catalog import Catalog
 
 SCHEMA = """
@@ -45,6 +46,7 @@ change. Do not change the table's schema or what data it represents."""
 
 def init(con) -> None:
     con.execute(SCHEMA)
+    con.execute("ALTER TABLE ai_runs ADD COLUMN IF NOT EXISTS trajectory JSON")
 
 
 def _sha(text: str) -> str:
@@ -62,7 +64,8 @@ def _escalation(con, incident_id: str) -> dict | None:
     return None if row is None else {"dataset": row[0], "reason": row[1]}
 
 
-def build_prompt(catalog: Catalog, g: nx.DiGraph, dataset: str, reason: str, job_rel: str) -> str:
+def build_prompt(catalog: Catalog, g: nx.DiGraph, dataset: str, reason: str, job_rel: str,
+                 lessons: list[str] = ()) -> str:
     ds = catalog.get(dataset)
     downstream = lineage.downstream(g, dataset)
     return f"""## Incident
@@ -75,7 +78,7 @@ Dataset `{dataset}` is stale. datamend did not auto-rerun it because a guardrail
 - Upstreams: {", ".join(ds.upstreams) or "none (source table)"}
 - Downstream, rebuilt after this job: {", ".join(downstream) or "none"}
 - Helpers available in `datamend/pipeline.py` are NOT in this sandbox; use plain SQL via `con`.
-
+{lessons_mod.prompt_section(list(lessons))}
 ## Task
 1. Read `{job_rel}` and the downstream jobs in `pipelines/` to understand the impact.
 2. Find why rerunning `{ds.job}` is unsafe.
@@ -179,16 +182,19 @@ def validate(con, catalog: Catalog, g: nx.DiGraph, dataset: str, patched: Path,
 
 
 def investigate(con, catalog: Catalog, incident_id: str, agent, now: datetime,
-                runs_dir: Path = Path(".datamend/ai")) -> dict:
+                runs_dir: Path = Path(".datamend/ai"), lessons: list[dict] | None = None) -> dict:
+    """`lessons`: rows from `lessons.all_lessons()`; global and this dataset's go in the prompt."""
     init(con)
     g = lineage.build(catalog)
     run_id = f"ai_{now:%Y%m%d%H%M%S}_{uuid.uuid4().hex[:6]}"
     cfg = catalog.ai
     row = {"run_id": run_id, "incident": incident_id, "backend": agent.name,
            "model": cfg.model, "created_at": now}
+    steps: list[dict] = []
 
     def finish(status: str, reason: str) -> dict:
-        row.update(status=status, status_reason=reason)
+        trajectory.add(steps, "decision", summary=f"{status}: {reason}")
+        row.update(status=status, status_reason=reason, trajectory=json.dumps(steps))
         _save(con, row)
         return row
 
@@ -212,7 +218,8 @@ def investigate(con, catalog: Catalog, incident_id: str, agent, now: datetime,
     shutil.copytree(pipelines, workspace / "pipelines")
     before = {p.relative_to(workspace): p.read_text() for p in workspace.rglob("*.py")}
 
-    prompt = build_prompt(catalog, g, dataset, esc["reason"], job_rel)
+    prompt = build_prompt(catalog, g, dataset, esc["reason"], job_rel,
+                          lessons_mod.select(lessons, f"dataset:{dataset}"))
     row["prompt"] = prompt
     try:
         response = agent.messages({
@@ -224,8 +231,9 @@ def investigate(con, catalog: Catalog, incident_id: str, agent, now: datetime,
     except Exception as exc:  # noqa: BLE001 - the run is recorded whatever the agent does
         return finish("failed", f"agent call failed: {type(exc).__name__}: {exc}"[:500])
     text = "".join(b.get("text", "") for b in response.get("content", []))
-    row.update(response=text, usage=json.dumps({**response.get("usage", {}),
-                                                **response.get("datamend", {})}))
+    meta = dict(response.get("datamend", {}))
+    trajectory.extend(steps, meta.pop("trajectory", None) or [])
+    row.update(response=text, usage=json.dumps({**response.get("usage", {}), **meta}))
     after = {p.relative_to(workspace): p.read_text() for p in workspace.rglob("*.py")}
     patched_text = after.get(Path(job_rel), "")
     diff = guardrails.unified_diff(original, patched_text, job_rel)
@@ -248,6 +256,9 @@ def investigate(con, catalog: Catalog, incident_id: str, agent, now: datetime,
          else "reply did not include the required JSON"},
     ]
     row["guardrails"] = json.dumps(rails)
+    trajectory.add(steps, "guardrails", ok=all(r["passed"] for r in rails),
+                   summary=f"{sum(r['passed'] for r in rails)}/{len(rails)} passed",
+                   items=[{"name": r["rule"], "passed": r["passed"]} for r in rails])
     if not all(r["passed"] for r in rails):
         return finish("rejected", "guardrail failed: "
                       + ", ".join(r["rule"] for r in rails if not r["passed"]))
@@ -258,6 +269,9 @@ def investigate(con, catalog: Catalog, incident_id: str, agent, now: datetime,
         return finish("failed", f"validator error: {type(exc).__name__}: {exc}"[:500])
     score = sum(r["passed"] for r in results) / len(results)
     row.update(validation=json.dumps(results), score=score)
+    trajectory.add(steps, "validation", ok=score >= cfg.min_score,
+                   summary=f"shadow validation {sum(r['passed'] for r in results)}/{len(results)}",
+                   items=[{"name": r["check"], "passed": r["passed"]} for r in results])
     if score < cfg.min_score:
         return finish("rejected", f"validation score {score:.2f} < {cfg.min_score:.2f}")
 

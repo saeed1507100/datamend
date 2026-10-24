@@ -30,7 +30,7 @@ shape and returns a Messages API response. Behind it, it runs the local Claude C
 CLI headless:
 
 ```
-claude -p <prompt> --output-format json --model <model>
+claude -p <prompt> --output-format stream-json --verbose --model <model>
   --tools Read,Glob,Grep,Edit --disallowedTools Bash,Write,WebFetch,WebSearch,...
   --permission-mode acceptEdits --max-turns N --max-budget-usd B
   --setting-sources project --strict-mcp-config --no-session-persistence
@@ -41,8 +41,65 @@ claude -p <prompt> --output-format json --model <model>
 - The agent can read and edit files. It can't run a shell, browse the web, or use MCP servers.
 - `--bare` adds stricter isolation, and needs `ANTHROPIC_API_KEY` auth.
 
+The endpoint reads the CLI's event stream and returns every tool call as a step in
+`datamend.trajectory` (see the next section). The rest of the response is the usual
+Messages API shape.
+
 Because the endpoint speaks the Messages API shape, you can swap it for the hosted
 Claude API (or the Claude Agent SDK) without changing the fixer.
+
+## Trajectory: every step the agent took
+
+Each run, from `datamend ai investigate` or `datamend watch`, stores its trajectory
+in the `trajectory` column of `ai_runs` or `remote_runs`. A trajectory is a list of
+numbered steps:
+
+| `kind` | Added by | Fields |
+| --- | --- | --- |
+| `tool_call` | Agent | `tool` (`Read`, `Glob`, `Grep`, `Edit`), `target` (file or pattern), `ok`, `result`, and `edit` (`old`, `new`) for edits |
+| `message` | Agent | `text`: the agent's reply |
+| `reproduce` | datamend | Whether the unchanged code failed in shadow mode |
+| `guardrails`, `validation` | datamend | `ok`, `summary`, and `items` with each rule or check |
+| `retry` | datamend | The failures fed back to the agent for the next `attempt` |
+| `decision` | datamend | The final status and reason |
+
+Every step has `source`: `live` (captured from the stream), `datamend`, or
+`reconstructed`. The recordings in `examples/ai/` and `examples/remote/` were made
+before live capture existed, so their agent steps are reconstructed from the files
+the agent wrote and its answer, and the recording says so in `trajectory_source`.
+
+To print a run's steps:
+
+```bash
+uv run datamend ai show <run_id> --steps
+```
+
+## Feedback and lessons
+
+A reviewer can comment on a whole run, or on one step of it. Each comment becomes a
+lesson, and later prompts in the same scope list it under "Lessons from past
+reviews".
+
+```bash
+uv run datamend ai feedback <run_id> --step 5 "Use DELETE + INSERT on the window, not DROP"
+uv run datamend ai feedback <run_id> "Good fix; keep them this small" --scope global
+uv run datamend ai lessons list
+uv run datamend ai lessons forget <lesson_id>
+uv run datamend ai lessons export          # writes .datamend/lessons.md
+```
+
+- The run can be from `datamend ai` (`--db`) or `datamend watch` (`--state`).
+- The default scope is the run's own: `dataset:<name>` for `datamend ai` runs and
+  `deployment:<name>` for `datamend watch` runs. `--scope global` applies the lesson
+  everywhere.
+- A lesson on a step names the step, for example
+  "(reviewer comment on a past step: Edit pipelines/load_raw_payments.py)".
+- Lessons live in `.datamend/lessons.duckdb` (`--lessons`, or `DATAMEND_LESSONS`).
+  Every change rewrites `.datamend/lessons.md`, so you can review lessons in git.
+- `forget` keeps the lesson in the store, marked inactive, and drops it from prompts.
+
+Lessons are guidance, not rules. The prompt tells the agent to follow them unless
+they conflict with the task's rules, and every guardrail still applies.
 
 ## Guardrails
 

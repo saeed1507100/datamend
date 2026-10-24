@@ -17,6 +17,8 @@ from pathlib import Path
 
 import duckdb
 
+from datamend.ai import lessons as lessons_mod
+from datamend.ai import trajectory
 from datamend.remote import compare
 from datamend.remote.config import Deployment, RepoConfig
 from datamend.remote.config import load as load_config
@@ -33,7 +35,8 @@ CREATE TABLE IF NOT EXISTS remote_runs (
 )
 """
 # Columns added after the first release; ADD COLUMN IF NOT EXISTS upgrades old state DBs.
-COLUMNS = {"confidence": "DOUBLE", "confidence_breakdown": "JSON", "review": "JSON"}
+COLUMNS = {"confidence": "DOUBLE", "confidence_breakdown": "JSON", "review": "JSON",
+           "trajectory": "JSON", "prompt": "VARCHAR"}
 
 SYSTEM = """You are a data reliability engineer. A production data pipeline failed. You are
 in a sandbox clone of its repository. You may read any file and edit only the allowed
@@ -70,7 +73,7 @@ def _save(con, row: dict) -> None:
 
 
 def build_prompt(run: FailedRun, dep: Deployment, logs: str, repro: dict,
-                 feedback: list[str]) -> str:
+                 feedback: list[str], lessons: list[str] = ()) -> str:
     entry_file = run.entrypoint.split(":")[0]
     text = f"""## Failed run
 Deployment `{run.deployment}`, run `{run.name}` ({run.state_type}).
@@ -93,6 +96,7 @@ datamend re-ran the unchanged code in shadow mode. Result: {repro.get("error", "
 - Don't add dependencies, network calls, subprocesses, or SQL that drops or truncates.
 - If the input data is malformed, handle it explicitly and keep every valid record.
 """
+    text += lessons_mod.prompt_section(list(lessons))
     if feedback:
         text += "\n## Your previous attempt failed validation\n" + "\n".join(
             f"- {f}" for f in feedback) + "\nFix these and keep what worked.\n"
@@ -293,14 +297,16 @@ def pr_body(run: FailedRun, row: dict, logs: str) -> str:
 
 def investigate(run: FailedRun, *, source: PrefectSource, github, clone_url: str, base: str,
                 agent, con, runs_dir: Path, now: datetime, publish: bool = True,
-                token: str | None = None) -> dict:
+                token: str | None = None, lessons: list[dict] | None = None) -> dict:
     run_id = f"rm_{now:%Y%m%d%H%M%S}_{uuid.uuid4().hex[:6]}"
     row = {"run_id": run_id, "flow_run_id": run.id, "deployment": run.deployment,
            "signature": signature(run.deployment, run.message), "error": run.message[:1000],
            "attempts": 0, "created_at": now}
+    steps: list[dict] = []
 
     def finish(status: str, reason: str) -> dict:
-        row.update(status=status, reason=reason, finished_at=datetime.now())
+        trajectory.add(steps, "decision", summary=f"{status}: {reason}")
+        row.update(status=status, reason=reason, finished_at=datetime.now(), trajectory=steps)
         _save(con, row)
         return row
 
@@ -324,6 +330,8 @@ def investigate(run: FailedRun, *, source: PrefectSource, github, clone_url: str
     tag = uuid.uuid4().hex[:8]
     repro, schema = shadow.execute(f"{tag}r")
     shadow.drop(schema)
+    trajectory.add(steps, "reproduce", ok=not repro["ok"],
+                   summary=repro.get("error") or "unchanged code succeeded in shadow mode")
     if repro["ok"]:
         return finish("not_reproduced", "the unchanged code succeeded in shadow mode; "
                       "likely transient (rerun the deployment) or data has since changed")
@@ -333,13 +341,18 @@ def investigate(run: FailedRun, *, source: PrefectSource, github, clone_url: str
     secret_values = [v for k, v in os.environ.items()
                      if any(s in k for s in ("TOKEN", "KEY", "SECRET", "PASSWORD")) and len(v) > 8]
     usage_total = {"num_turns": 0, "cost_usd": 0.0}
+    learned = lessons_mod.select(lessons, f"deployment:{run.deployment}")
     for attempt in range(1, cfg.limits.max_attempts + 1):
         row["attempts"] = attempt
+        if feedback:
+            trajectory.add(steps, "retry", attempt=attempt, summary="; ".join(feedback)[:500])
+        prompt = build_prompt(run, dep, logs, repro, feedback, learned)
+        row.setdefault("prompt", prompt)
         try:
             response = agent.messages({
                 "model": cfg.agent.model, "system": SYSTEM, "max_turns": cfg.agent.max_turns,
                 "max_budget_usd": cfg.agent.max_budget_usd,
-                "messages": [{"role": "user", "content": build_prompt(run, dep, logs, repro, feedback)}],
+                "messages": [{"role": "user", "content": prompt}],
                 "metadata": {"workspace": str(ws.path.resolve())},
             })
         except Exception as exc:  # noqa: BLE001 - recorded, never raised past the pass
@@ -347,6 +360,7 @@ def investigate(run: FailedRun, *, source: PrefectSource, github, clone_url: str
         meta = response.get("datamend", {})
         usage_total["num_turns"] += meta.get("num_turns") or 0
         usage_total["cost_usd"] += meta.get("cost_usd") or 0.0
+        trajectory.extend(steps, meta.get("trajectory") or [], attempt=attempt)
         row["usage"] = usage_total
         text = "".join(b.get("text", "") for b in response.get("content", []))
         explanation = _explanation(text)
@@ -355,6 +369,9 @@ def investigate(run: FailedRun, *, source: PrefectSource, github, clone_url: str
         diff = ws.git("diff", "--", *changed) if changed else ""
         rails = guardrails(changed, diff, dep, cfg.limits.max_diff_lines, explanation, secret_values)
         row.update(explanation=explanation, diff=diff, guardrails=rails)
+        trajectory.add(steps, "guardrails", attempt=attempt, ok=all(r["passed"] for r in rails),
+                       summary=f"{sum(r['passed'] for r in rails)}/{len(rails)} passed",
+                       items=[{"name": r["rule"], "passed": r["passed"]} for r in rails])
         if not all(r["passed"] for r in rails):
             feedback = [f"guardrail {r['rule']} failed: {r['detail']}" for r in rails if not r["passed"]]
             continue
@@ -364,6 +381,9 @@ def investigate(run: FailedRun, *, source: PrefectSource, github, clone_url: str
         row.update(validation=checks, comparison=comparison,
                    score=sum(c["passed"] for c in hard) / len(hard),
                    confidence=conf, confidence_breakdown=breakdown)
+        trajectory.add(steps, "validation", attempt=attempt, ok=row["score"] == 1.0,
+                       summary=f"validation {row['score']:.2f}, confidence {conf:.2f}",
+                       items=[{"name": i["check"], "passed": i["passed"]} for i in breakdown])
         if row["score"] == 1.0 and conf >= cfg.limits.min_confidence:
             break
         feedback = [f"{i['check']}: {i['detail']}" for i in breakdown
@@ -402,7 +422,8 @@ def investigate(run: FailedRun, *, source: PrefectSource, github, clone_url: str
 
 def watch(*, source: PrefectSource, github, clone_url: str, base: str, agent, state: Path,
           runs_dir: Path, now: datetime, lookback_hours: int = 24, max_investigations: int = 3,
-          publish: bool = True, token: str | None = None) -> list[dict]:
+          publish: bool = True, token: str | None = None,
+          lessons: list[dict] | None = None) -> list[dict]:
     """One pass: newest failure per deployment, skipping signatures already handled."""
     with duckdb.connect(str(state)) as con:
         init(con)
@@ -416,7 +437,7 @@ def watch(*, source: PrefectSource, github, clone_url: str, base: str, agent, st
             seen.add(run.deployment)
             results.append(investigate(run, source=source, github=github, clone_url=clone_url,
                                        base=base, agent=agent, con=con, runs_dir=runs_dir, now=now,
-                                       publish=publish, token=token))
+                                       publish=publish, token=token, lessons=lessons))
             if len(results) >= max_investigations:
                 break
         return results

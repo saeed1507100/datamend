@@ -2,7 +2,8 @@
 
 POST /v1/messages runs `claude -p` headless inside a sandbox folder, with a fixed,
 minimal tool set (Read, Glob, Grep, Edit: no shell, no web, no MCP), and returns
-the answer in the Anthropic Messages API response shape.
+the answer in the Anthropic Messages API response shape. The run streams events
+(`stream-json`), and every tool call comes back as a step in `datamend.trajectory`.
 
 Safety: binds to 127.0.0.1, requires a bearer token, and only runs in folders
 under the workspace root.
@@ -18,6 +19,8 @@ from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from datamend.ai import trajectory
+
 TOOLS = "Read,Glob,Grep,Edit"
 DENIED = "Bash,Write,NotebookEdit,WebFetch,WebSearch,Task,Agent"
 
@@ -28,7 +31,7 @@ def claude_command(prompt: str, system: str | None, model: str, max_turns: int,
                    max_budget_usd: float, bare: bool = False) -> list[str]:
     cmd = [
         "claude", "-p", prompt,
-        "--output-format", "json",
+        "--output-format", "stream-json", "--verbose",
         "--model", model,
         "--tools", TOOLS,
         "--allowedTools", TOOLS,
@@ -48,11 +51,20 @@ def claude_command(prompt: str, system: str | None, model: str, max_turns: int,
     return cmd
 
 
+def parse_stream(stdout: str) -> dict:
+    """The final `result` event, plus every event under `events`."""
+    events = [json.loads(line) for line in stdout.splitlines() if line.strip().startswith("{")]
+    result = next((e for e in reversed(events) if e.get("type") == "result"), None)
+    if result is None:
+        raise RuntimeError("claude stream ended without a result event")
+    return {**result, "events": events}
+
+
 def subprocess_runner(cmd: list[str], cwd: Path, timeout: int) -> dict:
     proc = subprocess.run(cmd, check=False, cwd=cwd, capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0 and not proc.stdout.strip():
         raise RuntimeError(f"claude exited {proc.returncode}: {proc.stderr.strip()[:500]}")
-    return json.loads(proc.stdout)
+    return parse_stream(proc.stdout)
 
 
 def _text(content) -> str:
@@ -92,6 +104,7 @@ def handle(body: dict, workspace_root: Path, runner: Runner, bare: bool = False,
             "cost_usd": out.get("total_cost_usd"),
             "duration_ms": int((time.monotonic() - started) * 1000),
             "subtype": out.get("subtype"),
+            "trajectory": trajectory.from_stream(out.get("events", []), str(workspace)),
         },
     }
 
