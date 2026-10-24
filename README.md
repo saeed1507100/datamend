@@ -140,6 +140,9 @@ writing only to a throwaway schema. It then compares the result with production
 and opens a pull request with the evidence. The repo declares its shadow contract
 in `datamend.yaml`. Design and status: [docs/REMOTE.md](docs/REMOTE.md).
 
+Example: [a pull request datamend opened](https://github.com/saeed1507100/datamend-prefect-demo/pull/1)
+on [datamend-prefect-demo](https://github.com/saeed1507100/datamend-prefect-demo).
+
 ## Showcase site
 
 [`site/`](site/) is a static page that replays a real run: load, failures,

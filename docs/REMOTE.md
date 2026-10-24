@@ -13,8 +13,13 @@ Steps 1 to 4 of the build order below work for Prefect. A real pass against a lo
 Prefect 3.9 server fixed a real failure (`ValueError` on vendor amounts like
 `'$2,369.53'`) in 39 s and 12 agent turns ($0.09), with validation 1.00, and wrote
 the PR description. Production stayed at 45 rows, and every shadow schema was
-dropped. Opening the real GitHub PR is the one step not run yet: it needs the
-demo repo on GitHub.
+dropped.
+
+A second real pass opened
+[saeed1507100/datamend-prefect-demo#1](https://github.com/saeed1507100/datamend-prefect-demo/pull/1).
+It took 2 attempts: the first fix broke the repo's test, validation fed that back,
+and the second attempt passed. A third pass skipped the failure because the open
+PR carries its error signature.
 
 Command: `datamend watch prefect --repo owner/name` (see `--help`). Code:
 `datamend/remote/`. A recorded run for tests and demos:
