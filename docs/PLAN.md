@@ -70,6 +70,10 @@ AWS Glue, Step Functions), real pipeline job files, the guardrailed AI fixer
 with a Claude Code agent endpoint, and the showcase site. Next: deploy the site
 (see DEPLOY.md), and decide whether AI fixes should open pull requests.
 
+## Next phase
+
+The ordered next steps, and which ones need Saeed, are in [LOG.md](LOG.md#next-steps).
+
 ## Session 2 (next Sat) — make it convincing
 
 - Backfill action + gap incident.
