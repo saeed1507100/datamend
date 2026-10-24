@@ -1,5 +1,15 @@
 # Deployment plan: showcase site and portfolio
 
+## Status (2026-10-24)
+
+- Vercel project `datamend` (team `saeed-khan`) is live at https://datamend.vercel.app.
+- `datamend.saeedkhan.dev` is added to the project. It goes live once Namecheap has
+  an `A` record: host `datamend`, value `76.76.21.21`.
+- Auto-deploy from `main` needs the Vercel GitHub app to have access to
+  `saeed1507100/datamend`. Then run `vercel git connect` from the repo root.
+- `vercel.json` at the repo root builds `site/` and skips deploys when neither
+  `site/` nor `vercel.json` changed.
+
 ## What gets deployed
 
 | Piece | Where | Why |

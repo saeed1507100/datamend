@@ -1,0 +1,6 @@
+.venv
+demo
+.datamend
+*.duckdb
+site/node_modules
+site/dist
