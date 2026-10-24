@@ -1,123 +1,166 @@
 import raw from "./scenario.json";
+import { AgentTrajectory } from "./AgentTrajectory";
 import { Diff, Replay } from "./Replay";
 import type { Scenario } from "./types";
 
 const data = raw as unknown as Scenario;
 const REPO = "https://github.com/saeed1507100/datamend";
+const PR = "https://github.com/saeed1507100/datamend-prefect-demo/pull/1";
 const ai = data.steps.find((s) => s.key === "investigate")!.ai!;
 
+const PROBLEMS = [
+  ["The 3 a.m. stale dashboard", "A source load quietly stops. Nobody notices until the revenue dashboard is wrong in the morning stand-up."],
+  ["One failure, nine pages", "One upstream table fails and every table below it alerts. You get paged for 9 tables and have to work out which one matters."],
+  ["The rerun that made it worse", "You rerun the failed job by hand. It wasn't idempotent, so now the payments table has duplicate rows."],
+];
+
+const HOW = [
+  ["Detect", "Freshness and row-count checks run against every dataset in the catalog."],
+  ["Trace the root cause", "datamend walks the lineage graph upstream and groups symptoms under the table that actually broke."],
+  ["Decide with guardrails", "Five rules decide whether a fix is safe: a known fix exists, the job is idempotent, the blast radius is small, no recent retry, no manual-only tables."],
+  ["Fix or escalate", "Safe fixes rerun or backfill automatically. Everything else goes to a person, optionally with an AI-proposed patch that already passed checks."],
+  ["Audit", "Every incident, decision, rule result, action, and outcome is logged with its reason."],
+];
+
 const RULES = [
-  ["registered_fix", "The incident type has a registered fix: stale → rerun, missing rows → backfill."],
+  ["registered_fix", "The incident type has a registered fix: late means rerun, missing rows means backfill."],
   ["idempotent", "The job is declared idempotent, so a rerun can't duplicate data."],
-  ["blast_radius", `The blast radius is at most ${data.policy.max_blast_radius} downstream datasets.`],
+  ["blast_radius", `At most ${data.policy.max_blast_radius} downstream datasets are affected.`],
   ["cooldown", `The same fix didn't run in the last ${data.policy.cooldown_minutes} minutes.`],
-  ["not_manual", "No dataset in the blast radius is owner-tagged critical: manual."],
+  ["not_manual", "No affected dataset is tagged critical: manual by its owner."],
 ];
 
-const AI_FLOW = [
-  ["Gate", "Only incidents escalated for an AI-eligible rule (here: idempotent). Owner opt-outs, wide blast radius, and cooldowns stay with people."],
-  ["Sandbox", "The agent works on a copy of the pipeline folder. It never sees credentials or live data."],
-  ["Locked-down agent", "Claude Code runs headless behind a Messages-API-shaped endpoint with Read, Glob, Grep, and Edit only. No shell, web, or MCP."],
-  ["Static guardrails", "One file changed, a small diff, allowlisted imports, literal SQL with no DDL or admin statements, and a structured explanation."],
-  ["Shadow validation", "The patch runs twice on a copy of the warehouse. Reruns and backfills must change nothing; ids stay unique; schema and volume hold; downstream checks pass."],
-  ["Human approval", "A person approves. datamend commits to a branch, applies, reruns, and re-checks. Nothing is applied if any step fails."],
+const NEVER = [
+  ["Never merges", "An AI fix leaves as a pull request. A person reviews and merges it, or doesn't."],
+  ["Never writes to production to test", "Patches run against a shadow copy of the warehouse. Production stays as it was until a person approves."],
+  ["Never touches manual datasets", "If an owner tags a dataset critical: manual, datamend escalates and stops. No rerun, no AI patch."],
 ];
 
-const ADAPTERS = [
-  ["Warehouse", ["DuckDB", "Postgres", "Any DB-API: Redshift, SQLite, …"]],
-  ["Orchestrator", ["Local Python jobs", "Apache Airflow (REST)", "Prefect (REST)", "AWS Glue", "AWS Step Functions"]],
-  ["Lineage", ["datasets.yaml", "OpenLineage run events"]],
+const INTEGRATIONS = [
+  ["Warehouses", ["DuckDB", "Postgres", "Any DB-API driver"]],
+  ["Orchestrators", ["Prefect", "Apache Airflow", "AWS Glue", "AWS Step Functions", "Local Python jobs"]],
+  ["Lineage", ["datasets.yaml", "OpenLineage events"]],
 ] as const;
 
 export function App() {
   return (
     <>
+      <a className="skip" href="#main">Skip to content</a>
       <header className="top">
         <a className="brand" href="#">datamend</a>
-        <nav>
-          <a href="#replay">Replay</a><a href="#ai">AI</a><a href="#adapters">Plug in</a><a href="#audit">Audit</a>
+        <nav aria-label="Sections">
+          <a href="#problem">Problem</a><a href="#how">How it works</a><a href="#replay">Replay</a><a href="#proof">Proof</a>
           <a className="gh" href={REPO}>GitHub</a>
         </nav>
       </header>
 
-      <main>
+      <main id="main">
         <section className="hero">
-          <p className="eyebrow">Self-healing data pipelines</p>
-          <h1>Auto-fix the safe data incidents.<br />Escalate the rest.<br /><span>Audit everything.</span></h1>
+          <h1>Your pipelines break at 3 a.m. datamend fixes the safe ones and wakes you only for the rest.</h1>
           <p className="lede">
-            datamend watches dataset freshness and quality, walks the lineage graph to find the root cause and
-            blast radius, fixes what is provably safe, and hands the rest to a guardrailed AI agent and a person.
+            It finds the one upstream table that actually failed, reruns it only when a rerun can't corrupt data,
+            and hands everything else to you with a tested fix proposal and a full audit trail.
           </p>
           <div className="cta">
-            <a className="btn primary" href="#replay">Watch a real run</a>
-            <a className="btn" href={REPO}>Read the code</a>
+            <a className="btn primary" href="#replay">Watch a real incident replay</a>
+            <a className="btn" href={REPO}>View on GitHub</a>
           </div>
-          <ul className="facts">
-            <li><strong>{data.graph.nodes.length}</strong> datasets, 3 layers</li>
-            <li><strong>{data.steps[1].incidents?.length}</strong> incidents → <strong>{data.steps[2].roots?.length}</strong> root causes</li>
-            <li><strong>2</strong> auto-fixed, <strong>1</strong> fixed by AI + human</li>
-            <li><strong>{data.audit.length}</strong> audit entries</li>
-          </ul>
         </section>
 
-        <Replay data={data} />
+        <section className="band" id="problem">
+          <h2>The problem</h2>
+          <div className="problems">
+            {PROBLEMS.map(([t, d]) => <article key={t}><h3>{t}</h3><p>{d}</p></article>)}
+          </div>
+        </section>
 
-        <section className="band">
-          <h2>Five rules before any automatic fix</h2>
-          <p className="section-lede">An allowlist, not a denylist. If any rule fails, the incident goes to a person with the failed rule as the reason.</p>
-          <ol className="rules">
-            {RULES.map(([r, d]) => <li key={r}><code>{r}</code><span>{d}</span></li>)}
+        <section className="band" id="how">
+          <h2>How it works</h2>
+          <ol className="how">
+            {HOW.map(([t, d]) => <li key={t}><h3>{t}</h3><p>{d}</p></li>)}
           </ol>
+          <details className="rules-box">
+            <summary>The five guardrail rules, in full</summary>
+            <ul className="rules">
+              {RULES.map(([r, d]) => <li key={r}><code>{r}</code><span>{d}</span></li>)}
+            </ul>
+            <p className="note">If any rule fails, the incident goes to a person with the failed rule as the reason.</p>
+          </details>
         </section>
 
-        <section className="band" id="ai">
-          <h2>AI that has to prove its fix</h2>
+        <section className="band" id="replay" aria-labelledby="replay-h">
+          <h2 id="replay-h">Replay a real run</h2>
           <p className="section-lede">
-            When a fix isn't provably safe, an agent investigates. Its output is a proposal, not a change, until it passes every check
-            and a person signs off.
+            This is a recorded run of the real engine on ten synthetic tables. Step through it to see 7 alerts become
+            2 root causes, 2 automatic fixes, and 1 AI-assisted fix that a person approved.
           </p>
-          <ol className="flow">
-            {AI_FLOW.map(([t, d], n) => <li key={t}><span className="n">{n + 1}</span><h4>{t}</h4><p>{d}</p></li>)}
-          </ol>
+          <Replay data={data} />
+        </section>
+
+        <AgentTrajectory data={data} />
+
+        <section className="band" id="proof">
+          <h2>Proof</h2>
+          <p className="section-lede">Numbers from real Claude Code runs, not estimates.</p>
+          <div className="proof">
+            <article>
+              <h3>Local fix: non-idempotent payments load</h3>
+              <dl className="nums">
+                <div><dt>Agent turns</dt><dd>6</dd></div><div><dt>Time</dt><dd>21 s</dd></div>
+                <div><dt>Cost</dt><dd>$0.03</dd></div><div><dt>Validation</dt><dd>7/7</dd></div>
+              </dl>
+            </article>
+            <article>
+              <h3>Prefect fix: <code>'$2,369.53'</code> ValueError</h3>
+              <dl className="nums">
+                <div><dt>Agent turns</dt><dd>12</dd></div><div><dt>Time</dt><dd>39 s</dd></div>
+                <div><dt>Cost</dt><dd>$0.09</dd></div><div><dt>Production</dt><dd>untouched</dd></div>
+              </dl>
+            </article>
+            <article className="pr">
+              <h3>A real pull request</h3>
+              <p>
+                The first attempt broke the repo's own test. Shadow validation caught it and fed the failure back.
+                The second attempt passed. datamend opened the PR and stopped there.
+              </p>
+              <a className="btn" href={PR}>Open PR #1 on GitHub</a>
+            </article>
+          </div>
           <div className="ai-card">
             <div className="ai-why">
-              <h3>From the recorded run</h3>
+              <h3>What the agent wrote in the replayed run</h3>
               <dl>
                 <dt>Root cause</dt><dd>{ai.explanation.root_cause}</dd>
                 <dt>Why this fix</dt><dd>{ai.explanation.rationale}</dd>
                 <dt>Risk, in its own words</dt><dd>{ai.explanation.risk}</dd>
               </dl>
             </div>
-            <div>
-              <Diff text={ai.diff} />
-              <p className="note">
-                Model <code>{ai.model}</code> · {ai.usage.num_turns} turns · {(ai.usage.duration_ms / 1000).toFixed(0)} s ·
-                ${ai.usage.cost_usd.toFixed(3)} · validation score {ai.score.toFixed(2)}
-              </p>
-            </div>
+            <Diff text={ai.diff} />
           </div>
         </section>
 
-        <section className="band" id="adapters">
-          <h2>Plug into the platform you already run</h2>
-          <p className="section-lede">datamend needs two things from a platform: table stats and a way to run a job. Pick adapters in one YAML block.</p>
+        <section className="band" id="never">
+          <h2>What it will never do</h2>
+          <ul className="never">
+            {NEVER.map(([t, d]) => <li key={t}><h3>{t}</h3><p>{d}</p></li>)}
+          </ul>
+        </section>
+
+        <section className="band" id="integrations">
+          <h2>Works with what you run</h2>
+          <p className="section-lede">datamend needs table stats and a way to trigger a job. Pick adapters in one YAML block.</p>
           <div className="adapters">
-            {ADAPTERS.map(([kind, list]) => (
-              <div key={kind} className="adapter"><h4>{kind}</h4><ul>{list.map((x) => <li key={x}>{x}</li>)}</ul></div>
+            {INTEGRATIONS.map(([kind, list]) => (
+              <div key={kind} className="adapter"><h3>{kind}</h3><ul>{list.map((x) => <li key={x}>{x}</li>)}</ul></div>
             ))}
             <pre className="yaml">{`platform:
   warehouse:    {type: postgres, dsn_env: WAREHOUSE_DSN}
-  orchestrator: {type: airflow, url: https://airflow.internal}
-
-datasets:
-  - {name: raw_orders, job: load_raw_orders,   # DAG id
-     cadence_minutes: 60, checks: {min_rows: 100}}`}</pre>
+  orchestrator: {type: prefect, url: https://prefect.internal/api}`}</pre>
           </div>
         </section>
 
         <section className="band" id="audit">
-          <h2>The audit trail</h2>
-          <p className="section-lede">Every incident, decision, action, and result, with the reason. This is the log from the run above.</p>
+          <h2>The audit log from this run</h2>
           <div className="table-wrap">
             <table>
               <thead><tr><th>Incident</th><th>Decision</th><th>Action</th><th>Reason</th><th>Result</th></tr></thead>
@@ -125,8 +168,8 @@ datasets:
                 {data.audit.map((e, n) => (
                   <tr key={n}>
                     <td><code>{e.incident}</code></td>
-                    <td><span className={`pill p-${e.decision}`}>{e.decision}</span></td>
-                    <td><code>{e.action ?? "—"}</code></td>
+                    <td><span className={`pill p-${e.decision}`}>{e.decision.replace(/_/g, " ")}</span></td>
+                    <td><code>{e.action ?? "none"}</code></td>
                     <td>{e.reason}</td>
                     <td>{e.result}</td>
                   </tr>
@@ -139,10 +182,10 @@ datasets:
 
       <footer>
         <p>
-          Everything on this page comes from <code>datamend export-scenario</code>, which runs the real system on synthetic data.
-          The AI step replays a real Claude Code run recorded on {ai.recorded_at.slice(0, 10)}.
+          The replay comes from <code>datamend export-scenario</code>, which runs the real system on synthetic data.
+          The AI step replays a Claude Code run recorded on {ai.recorded_at.slice(0, 10)}.
         </p>
-        <p><a href={REPO}>github.com/saeed1507100/datamend</a> · MIT</p>
+        <p><a href={REPO}>Source on GitHub</a>, MIT license. Built by Saeed Khan.</p>
       </footer>
     </>
   );

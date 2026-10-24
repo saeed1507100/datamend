@@ -37,7 +37,19 @@ export interface Scenario {
 }
 
 export const STATE_LABEL: Record<State, string> = {
-  healthy: "healthy", stale: "stale", gap: "missing rows", auto_fix: "auto-fixed",
-  suppressed: "fixed via root", needs_approval: "escalated", blocked: "blocked",
-  ai_proposed: "AI fix proposed", ai_fix: "AI fix shipped",
+  healthy: "up to date", stale: "late", gap: "missing rows", auto_fix: "auto-fixed",
+  suppressed: "fixed upstream", needs_approval: "needs a person", blocked: "on hold",
+  ai_proposed: "AI fix in review", ai_fix: "AI fix applied",
+};
+
+export const STATE_HELP: Record<State, string> = {
+  healthy: "Fresh data, expected row count.",
+  stale: "Didn't refresh on schedule.",
+  gap: "Refreshed, but rows went missing.",
+  auto_fix: "Passed every guardrail, so datamend reran it.",
+  suppressed: "Healed by fixing its upstream root. No separate action.",
+  needs_approval: "Failed a guardrail. Escalated to a human.",
+  blocked: "Downstream of an escalation. Waits instead of rebuilding on bad data.",
+  ai_proposed: "An agent proposed a patch. It's being checked.",
+  ai_fix: "A person approved the patch; it ran and passed checks.",
 };
